@@ -77,3 +77,118 @@ def test_stereo_is_mixed_to_mono():
     stereo = np.stack([np.full(800, 0.2, np.float32), np.zeros(800, np.float32)], axis=1)
     rec._callback(stereo, 800, None, None)
     assert np.allclose(rec.stop(), 0.1)
+
+
+# --- Список микрофонов как на Windows ------------------------------------------
+
+import sys  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+import pytest  # noqa: E402
+
+from localflow import audio  # noqa: E402
+
+REALTEK = "Микрофон (Realtek(R) Audio)"
+ARRAY = "Микрофонный массив (Intel® Smart Sound Technology)"
+
+
+class FakeSd:
+    """Одни и те же микрофоны в трёх звуковых подсистемах Windows."""
+
+    def __init__(self):
+        self.hostapis = [{"name": "MME", "default_input_device": 0},
+                         {"name": "Windows DirectSound", "default_input_device": 4},
+                         {"name": "Windows WASAPI", "default_input_device": 7}]
+        dev = lambda name, api, inp=2: {"name": name, "hostapi": api, "max_input_channels": inp,
+                                        "default_samplerate": 48000.0}
+        self.devices = [
+            dev("Переназначение звуковых устр. - Input", 0), dev(REALTEK, 0), dev(ARRAY[:31], 0),
+            dev("Переназначение звуковых устр. - Output", 0, inp=0),
+            dev("Первичный драйвер записи звука", 1), dev(REALTEK, 1), dev(ARRAY, 1),
+            dev(REALTEK, 2), dev(ARRAY, 2),
+        ]
+        self.default = SimpleNamespace(device=[0, 3], hostapi=0)
+        self.restarts = 0
+
+    def query_devices(self, device=None, kind=None):
+        if device is None and kind is None:
+            return list(self.devices)
+        return self.devices[self.default.device[0] if device is None else device]
+
+    def query_hostapis(self, index=None):
+        return tuple(self.hostapis) if index is None else self.hostapis[index]
+
+    def _terminate(self):
+        self.restarts += 1
+
+    def _initialize(self):
+        pass
+
+
+@pytest.fixture
+def fake_sd(monkeypatch):
+    sd = FakeSd()
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    return sd
+
+
+def test_each_microphone_listed_once_with_full_name(fake_sd):
+    assert audio.list_input_devices() == [
+        {"name": REALTEK, "label": REALTEK},
+        {"name": ARRAY[:31], "label": ARRAY},      # обрезанное имя MME — полное из WASAPI
+    ]
+    assert audio.find_input_device(REALTEK) == 1
+    assert audio.find_input_device(ARRAY[:31]) == 2
+    assert audio.find_input_device("USB Mic") is None
+
+
+def test_chosen_microphone_opens_by_number(fake_sd):
+    streams = []
+
+    def factory(**kw):
+        streams.append(kw)
+        return FakeStream(**kw)
+
+    rec = AudioRecorder(stream_factory=factory)
+    rec.device = REALTEK
+    rec.start()
+    rec.stop()
+    # по названию sounddevice нашёл бы его трижды и отказался открывать
+    assert streams[-1]["device"] == 1
+
+
+def test_unplugged_microphone_falls_back_but_is_remembered(fake_sd):
+    streams = []
+    rec = AudioRecorder(stream_factory=lambda **kw: streams.append(kw) or FakeStream(**kw))
+    rec.device = "USB Mic"
+    rec.start()
+    rec.stop()
+    assert streams[-1]["device"] is None and rec.device == "USB Mic"
+
+
+def test_broken_microphone_falls_back_to_system(fake_sd):
+    streams = []
+
+    def factory(**kw):
+        streams.append(kw["device"])
+        if kw["device"] == 1:
+            raise OSError("занят другой программой")
+        return FakeStream(**kw)
+
+    rec = AudioRecorder(stream_factory=factory)
+    rec.device = REALTEK
+    rec.start()
+    rec.stop()
+    assert streams[-1] is None and rec.device == REALTEK
+
+
+def test_device_list_refreshes_only_when_microphone_is_closed(fake_sd):
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    assert len(rec.input_devices()) == 2 and fake_sd.restarts == 1
+    rec.start()
+    fake_sd.devices.append({"name": "USB Mic", "hostapi": 0, "max_input_channels": 1,
+                            "default_samplerate": 44100.0})
+    rec.input_devices()
+    assert fake_sd.restarts == 1                   # во время записи не трогаем
+    rec.stop()
+    assert [m["name"] for m in rec.input_devices()][-1] == "USB Mic" and fake_sd.restarts == 2

@@ -45,21 +45,83 @@ def _default_stream_factory(**kw):
     return sd.InputStream(**kw)
 
 
+# Старые названия звуковых устройств Windows (MME) обрезаны до 31 буквы
+MME_NAME_LIMIT = 31
+
+
+def _inputs(sd) -> tuple[list[tuple[int, dict]], int | None]:
+    """Микрофоны одной звуковой подсистемы — той, где системный микрофон
+    (обычно MME): иначе каждый микрофон виден трижды-четырежды."""
+    devices = list(enumerate(sd.query_devices()))
+    inputs = [(i, d) for i, d in devices if d["max_input_channels"] > 0]
+    default = sd.default.device[0]
+    if default is None or default < 0:
+        default = sd.query_hostapis(sd.default.hostapi)["default_input_device"]
+    if default is None or default < 0 or default >= len(devices):
+        return inputs, None
+    api = devices[default][1]["hostapi"]
+    return [(i, d) for i, d in inputs if d["hostapi"] == api], default
+
+
+def _full_name(name: str, others: list[str]) -> str:
+    if len(name) < MME_NAME_LIMIT:
+        return name
+    longer = [o for o in others if o.startswith(name) and len(o) > len(name)]
+    return max(longer, key=len) if longer else name
+
+
 def list_input_devices() -> list[dict]:
-    """Микрофоны для настроек: [{"name", "default"}]."""
+    """Микрофоны для настроек: [{"name", "label"}]. name — чем открывать,
+    label — полное название для человека."""
     try:
         import sounddevice as sd
-        default = sd.default.device[0]
+        primary, default = _inputs(sd)
+        all_names = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
         seen, out = set(), []
-        for i, dev in enumerate(sd.query_devices()):
-            if dev["max_input_channels"] <= 0 or dev["name"] in seen:
+        for i, dev in primary:
+            name = dev["name"]
+            if name in seen:
                 continue
-            seen.add(dev["name"])
-            out.append({"name": dev["name"], "default": i == default})
+            # «Переназначение звуковых устройств» (Sound Mapper) — это и есть
+            # «как в системе», в других подсистемах его нет
+            if i == default and all_names.count(name) == 1 and len(sd.query_hostapis()) > 1:
+                continue
+            seen.add(name)
+            out.append({"name": name, "label": _full_name(name, all_names)})
         return out
     except Exception as exc:
         log.warning("Список микрофонов недоступен: %s", exc)
         return []
+
+
+def find_input_device(name: str | None) -> int | None:
+    """Номер микрофона по названию из настроек; None — нет такого сейчас."""
+    if not name:
+        return None
+    try:
+        import sounddevice as sd
+        primary, _ = _inputs(sd)
+        for i, dev in primary:
+            if dev["name"] == name:
+                return i
+        for i, dev in enumerate(sd.query_devices()):
+            if dev["max_input_channels"] > 0 and dev["name"] == name:
+                return i
+    except Exception as exc:
+        log.warning("Микрофон %r не найден: %s", name, exc)
+    return None
+
+
+def refresh_devices() -> None:
+    """Звуковая библиотека запоминает устройства при запуске; чтобы увидеть
+    подключённый потом микрофон, её надо перезапустить. Только когда ни
+    один микрофон не открыт."""
+    try:
+        import sounddevice as sd
+        sd._terminate()
+        sd._initialize()
+    except Exception as exc:
+        log.warning("Список устройств не обновился: %s", exc)
 
 
 class AudioRecorder:
@@ -92,12 +154,29 @@ class AudioRecorder:
             if self._recording:
                 self._chunks.append(mono.copy())
 
-    def _open(self, callback=None):
+    def input_devices(self) -> list[dict]:
+        """Свежий список микрофонов. Во время записи — без перезапуска
+        звуковой библиотеки (прежний список)."""
+        if not self._open_lock.acquire(timeout=3):
+            return list_input_devices()
+        try:
+            if not self._recording and self._stream is None:
+                refresh_devices()
+            return list_input_devices()
+        finally:
+            self._open_lock.release()
+
+    def _open(self, callback=None, system: bool = False):
         """Открыть микрофон: сначала как ждёт Whisper, потом как умеет он сам."""
+        device = None if system else find_input_device(self.device)
+        if self.device and device is None and not system:
+            # выбранный микрофон отключили — пишем системным, выбор помним:
+            # подключат обратно — снова возьмём его
+            log.warning("Микрофон %r не подключён — беру системный", self.device)
         tries = [(SAMPLE_RATE, CHANNELS)]
         try:
             import sounddevice as sd
-            info = sd.query_devices(self.device, "input")
+            info = sd.query_devices(device, "input")
             native = int(info["default_samplerate"])
             tries += [(native, CHANNELS), (native, max(1, min(2, info["max_input_channels"])))]
         except Exception:
@@ -106,7 +185,7 @@ class AudioRecorder:
         for rate, ch in dict.fromkeys(tries):
             try:
                 stream = self._factory(samplerate=rate, channels=ch, dtype="float32",
-                                       device=self.device, callback=callback)
+                                       device=device, callback=callback)
                 stream.start()
                 if (rate, ch) != (SAMPLE_RATE, CHANNELS):
                     log.info("Микрофон пишет %d Гц, %d кан. — переведу в 16 кГц", rate, ch)
@@ -114,11 +193,10 @@ class AudioRecorder:
                 return stream
             except Exception as exc:
                 last = exc
-        # Выбранный в настройках микрофон отключили — берём системный
-        if self.device is not None:
-            log.warning("Микрофон %r недоступен (%s) — беру системный", self.device, last)
-            self.device = None
-            return self._open(callback)
+        # Выбранный микрофон не открылся (занят, сломан драйвер) — системный
+        if device is not None:
+            log.warning("Микрофон %r не открылся (%s) — беру системный", self.device, last)
+            return self._open(callback, system=True)
         raise last
 
     def warm_up(self) -> None:

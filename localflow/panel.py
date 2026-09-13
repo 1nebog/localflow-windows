@@ -148,8 +148,16 @@ PANEL_STRINGS = {
 
 # --- Данные для страницы ------------------------------------------------------
 
-def options(app) -> dict:
-    """Варианты для выпадающих списков: [[значение, подпись], …]."""
+def mic_options(app, mics: list[dict]) -> list[list[str]]:
+    out = [["", tr("mic_default")]] + [[m["name"], m.get("label", m["name"])] for m in mics]
+    if app.recorder.device and app.recorder.device not in [v for v, _ in out]:
+        out.append([app.recorder.device, app.recorder.device])   # отключён, но выбран
+    return out
+
+
+def options(app, mics: list[dict] | None = None) -> dict:
+    """Варианты для выпадающих списков: [[значение, подпись], …].
+    mics — готовый список микрофонов (его долго получать в потоке окон)."""
     t = app.transcriber
     auto = tr("model_auto")
     if app.autotune.auto and (t.is_ready or app.started) and t.model_name in MODEL_LABELS:
@@ -160,14 +168,13 @@ def options(app) -> dict:
         if not is_ready(model, t.models_dir):
             label += f" · {model.size_mb} {tr('mb')}"
         models.append([key, label])
-    mics = [["", tr("mic_default")]] + [[m["name"], m["name"]] for m in app.list_mics()]
-    if app.recorder.device and app.recorder.device not in [m[0] for m in mics]:
-        mics.append([app.recorder.device, app.recorder.device])
+    if mics is None:
+        mics = app.list_mics()
     idle = [[str(m), tr("idle_never") if m == 0 else f"{m} {_ps('st_min')}"]
             for m in core.IDLE_UNLOAD_OPTIONS]
     return {
         "model": models,
-        "mic": mics,
+        "mic": mic_options(app, mics),
         "language": [[c, tr("lang_auto") if c == "auto" else lang_label(c)] for c in core.LANGUAGES],
         "translate_to": [[c, tr("translate_off") if c == "off" else lang_label(c)]
                          for c in TRANSLATE_TARGETS],
@@ -204,12 +211,12 @@ def settings(app) -> dict:
     }
 
 
-def snapshot(app) -> dict:
+def snapshot(app, mics: list[dict] | None = None) -> dict:
     history = app.dictation.history
     apps = sorted({it["app"] for it in history if it.get("app")} | set(app.dictation.app_profiles))
     return {
         "settings": settings(app),
-        "options": options(app),
+        "options": options(app, mics),
         "apps": apps,
         "history": [{"ts": it["ts"], "text": it["text"]} for it in history],
         "dict": core.read_pairs(core.DICTIONARY_PATH),
@@ -226,14 +233,18 @@ def apply(app, key: str, value) -> bool:
             return False
         return switches[key](value) is not False
     value = str(value)
-    allowed = [v for v, _ in options(app).get(key, [])]
+    if key == "mic":
+        # любое название: микрофон могли отключить, пока открыта панель
+        if len(value) > 200:
+            return False
+        app.set_mic(value or None)
+        return True
+    allowed = [v for v, _ in options(app, mics=[]).get(key, [])]
     if value not in allowed:
         log.warning("Панель: недопустимая настройка %r=%r", key, value)
         return False
     if key == "model":
         app.choose_model(None if value == "auto" else value)
-    elif key == "mic":
-        app.set_mic(value or None)
     elif key == "language":
         app.set_language(value)
     elif key == "translate_to":
@@ -414,7 +425,11 @@ class PanelServer:
     def get(self, path: str):
         app = self.app
         if path == "/api/all":
-            return self.call(lambda: snapshot(app))
+            mics = app.list_mics()        # не в потоке окон: это до секунды
+            return self.call(lambda: snapshot(app, mics))
+        if path == "/api/mics":
+            mics = app.list_mics()
+            return self.call(lambda: {"options": mic_options(app, mics), "current": app.recorder.device or ""})
         if path == "/api/status":
             def _status():
                 h = app.dictation.history
@@ -816,7 +831,9 @@ function renderStats(){
 }
 
 /* настройки */
-let hkTimer=null;
+let hkTimer=null, refreshMics=null;
+/* подключили микрофон и вернулись в окно — список свежий */
+window.addEventListener('focus',()=>{if(tab==='settings'&&refreshMics)refreshMics();});
 function renderSettings(){
   const st=DATA.settings, opt=DATA.options, c=$('#content');
   const sel=(key,options,cur,allowEmpty)=>{
@@ -844,6 +861,13 @@ function renderSettings(){
     `</div><div class="sec-title">${L.set_profiles}</div><div class="hint">${L.prof_hint}</div>
      <div id="profiles"></div><button class="btn ghost" id="addProf">${L.add}</button>`;
 
+  const micSel=c.querySelector('select[data-key="mic"]');
+  refreshMics=async()=>{
+    if(!micSel.isConnected||document.activeElement===micSel)return;
+    try{const r=await api('/api/mics');opt.mic=r.options;st.mic=r.current;
+      micSel.innerHTML=r.options.map(([v,l])=>`<option value="${esc(v)}"${v===r.current?' selected':''}>${esc(l)}</option>`).join('');}
+    catch(e){}
+  };
   c.querySelectorAll('.set-row select').forEach(s=>s.onchange=async()=>{
     const r=await post('/api/settings',{key:s.dataset.key,value:s.value});
     if(r.ok)st[s.dataset.key]=s.value;

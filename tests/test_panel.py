@@ -39,7 +39,7 @@ def make_app(tmp_path):
         autotune=SimpleNamespace(auto=True, status="", progress=None),
         keys=keys, sounds=SimpleNamespace(enabled=True), pill_animation="pulse",
         paused=False, started=True, download=None, hook_error=None,
-        list_mics=lambda: [{"name": "USB Mic", "default": False}],
+        list_mics=lambda: [{"name": "USB Mic", "label": "USB Mic"}],
         autostart_enabled=lambda: False,
         set_hotkey=set_hotkey,
         choose_model=calls.choose_model, set_language=calls.set_language,
@@ -293,3 +293,13 @@ def test_capture_ends_by_itself_when_panel_is_closed(tmp_path):
             break
         time.sleep(0.01)
     assert not app.keys.capturing              # никто не спрашивал состояние — всё равно снято
+
+
+def test_mic_list_endpoint_and_any_mic_name(server):
+    srv, app, calls = server
+    r = json.loads(request(srv, "/api/mics")[1])
+    assert r == {"options": [["", "Как в системе"], ["USB Mic", "USB Mic"]], "current": ""}
+    assert json.loads(request(srv, "/api/settings", {"key": "mic", "value": "Отключённый"})[1])["ok"]
+    assert calls[-1] == ("set_mic", "Отключённый")
+    app.recorder.device = "Отключённый"
+    assert panel.mic_options(app, [])[-1] == ["Отключённый", "Отключённый"]

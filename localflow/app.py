@@ -16,7 +16,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import __version__, core, menu, panel, strings
-from .audio import AudioRecorder, list_input_devices
+from .audio import AudioRecorder
 from .autotune import START_MODEL, AutoTune
 from .core import tr
 from .dictation import Dictation
@@ -274,7 +274,7 @@ class App:
             log.error("Панель не открылась: %s", exc)
 
     def list_mics(self) -> list[dict]:
-        return list_input_devices()
+        return self.recorder.input_devices()
 
     def set_hotkey(self, chord) -> None:
         chord = normalize(chord)
