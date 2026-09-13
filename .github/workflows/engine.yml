@@ -1,0 +1,167 @@
+# Сборка движка распознавания под любое железо и проверка на нём.
+#
+# Одна сборка на все компьютеры:
+#   - варианты под разные процессоры, от старых до новых (движок сам берёт
+#     лучший, который поддерживает процессор);
+#   - модуль для видеокарт через Vulkan: NVIDIA, AMD, Intel, включая
+#     встроенную графику. Нет видеокарты или драйвера — считает процессор.
+name: Engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "localflow/**"
+      - "tests/**"
+      - "tools/fetch_models.py"
+      - ".github/workflows/engine.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Выложить сборку движка в Releases"
+        type: boolean
+        default: false
+
+env:
+  WHISPER_REF: b5130
+  VULKAN_VERSION: 1.4.357.0
+  ENGINE_REV: "1"   # поменять, чтобы пересобрать без смены версии
+
+jobs:
+  build-whisper:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - name: Готовая сборка из кэша
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: whisper-engine
+          key: whisper-${{ env.WHISPER_REF }}-vk${{ env.VULKAN_VERSION }}-r${{ env.ENGINE_REV }}
+
+      - name: Исходники whisper.cpp
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ env.WHISPER_REF }}
+          path: src
+
+      - name: Vulkan SDK
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -sSfo "$env:RUNNER_TEMP\VulkanSDK.exe" -L "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
+
+      - name: Сборка
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cmake -S src -B build -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_SHARED_LIBS=ON `
+            -DGGML_NATIVE=OFF `
+            -DGGML_BACKEND_DL=ON `
+            -DGGML_CPU_ALL_VARIANTS=ON `
+            -DGGML_VULKAN=ON `
+            -DWHISPER_SDL2=OFF `
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build --config Release -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Упаковка
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force whisper-engine | Out-Null
+          $bin = "build\bin\Release"
+          Copy-Item "$bin\whisper-server.exe", "$bin\whisper-cli.exe" whisper-engine\
+          Copy-Item "$bin\*.dll" whisper-engine\
+          # Библиотеки Visual C++ кладём рядом: на чистой Windows их может не быть
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $crt = & $vswhere -latest -products * -find "VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" |
+                 Where-Object { $_ -notmatch "onecore|debug" } | Select-Object -Last 1
+          Write-Host "CRT: $crt"
+          Copy-Item "$crt\*.dll" whisper-engine\
+          Copy-Item src\LICENSE whisper-engine\LICENSE-whisper.cpp.txt
+          "whisper.cpp $env:WHISPER_REF, Vulkan SDK $env:VULKAN_VERSION" | Out-File whisper-engine\VERSION.txt
+          Get-ChildItem whisper-engine | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-engine-win-x64
+          path: whisper-engine
+
+  test-engine:
+    needs: build-whisper
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        model: [base, large-v3-turbo]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-engine-win-x64
+          path: engine
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Установка
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Модель из кэша
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: model-${{ matrix.model }}-v1
+
+      - name: Скачивание модели (код программы)
+        run: python tools/fetch_models.py ${{ matrix.model }} --dest models
+
+      - name: Движок запускается на чистом Windows
+        shell: pwsh
+        run: |
+          .\engine\whisper-cli.exe --help 2>&1 | Select-Object -First 3
+          if ($LASTEXITCODE -ne 0) { Write-Host "код выхода $LASTEXITCODE" }
+
+      - name: Распознавание настоящим движком
+        env:
+          LOCALFLOW_ENGINE_EXE: ${{ github.workspace }}\engine\whisper-server.exe
+          LOCALFLOW_TEST_MODELS: ${{ github.workspace }}\models
+          LOCALFLOW_TEST_MODEL: ${{ matrix.model }}
+        run: python -m pytest -s -v tests/test_engine_real.py
+
+  publish:
+    needs: test-engine
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-engine-win-x64
+          path: whisper-engine
+      - name: Выкладка в Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd whisper-engine && zip -qr ../whisper-engine-win-x64.zip . && cd ..
+          sha256sum whisper-engine-win-x64.zip | tee whisper-engine-win-x64.zip.sha256
+          TAG="engine-whisper-${WHISPER_REF}-r${ENGINE_REV}"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "Движок распознавания ${WHISPER_REF}" \
+            --notes "Служебная сборка whisper.cpp ${WHISPER_REF} для установщика LocalFlow." \
+            whisper-engine-win-x64.zip whisper-engine-win-x64.zip.sha256 \
+            || gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+               whisper-engine-win-x64.zip whisper-engine-win-x64.zip.sha256
