@@ -67,14 +67,16 @@ def make(tmp_path, monkeypatch):
                         model_name="base", server_factory=FakeServer)
         t.language = "ru"
         assert t.load()
+        for server in FakeServer.instances:  # прогрев не считаем
+            server.calls.clear()
         return t
 
     return _make
 
 
 def real_calls(t):
-    """Вызовы без прогрева секундой тишины."""
-    return [c for s in FakeServer.instances for c in s.calls][1:]
+    """Вызовы после прогрева."""
+    return [c for s in FakeServer.instances for c in s.calls]
 
 
 def test_short_audio_one_request_with_prompt(make):
@@ -102,14 +104,15 @@ def test_long_audio_windows_prompt_only_first(make):
     calls = real_calls(t)
     assert [c["sec"] for c in calls] == [30.0, 30.0, 15.0]
     assert "prompt" in calls[0] and all("prompt" not in c for c in calls[1:])
-    assert all(c["language"] == "auto" for c in calls)
+    # язык определяется один раз, дальше окна идут с уже известным языком
+    assert [c["language"] for c in calls] == ["auto", "ru", "ru"]
     # время сегментов — от начала всей записи, а не окна
     assert [round(s["start"]) for s in out["segments"]] == [0, 30, 60]
 
 
 def test_phrase_cut_by_window_is_redecoded(make):
     def script(sec, fields, n):
-        if n == 2:  # первое настоящее окно: фраза упёрлась в границу
+        if n == 1:  # первое окно: фраза упёрлась в границу
             return {"language": "russian", "segments": [
                 {"start": 0.0, "end": 10.0, "text": " первая"},
                 {"start": 10.0, "end": 29.9, "text": " разрез"}]}
@@ -126,7 +129,7 @@ def test_phrase_cut_by_window_is_redecoded(make):
 
 def test_decoder_stopped_early_rest_goes_to_next_window(make):
     def script(sec, fields, n):
-        if n == 2:
+        if n == 1:
             return {"language": "russian",
                     "segments": [{"start": 0.0, "end": 12.0, "text": " начало"}]}
         return {"language": "russian",
@@ -139,7 +142,7 @@ def test_decoder_stopped_early_rest_goes_to_next_window(make):
 
 def test_tail_recovery(make):
     def script(sec, fields, n):
-        if n == 2:  # основной прогон бросил хвост на 3 секунде из 10
+        if n == 1:  # основной прогон бросил хвост на 3 секунде из 10
             return {"language": "russian",
                     "segments": [{"start": 0.0, "end": 3.0, "text": " начало фразы"}]}
         return {"language": "russian",

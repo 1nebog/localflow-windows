@@ -38,6 +38,10 @@ class Transcriber:
 
     WINDOW_SEC = 30.0          # окно Whisper
     NO_SPEECH_THOLD = 0.85     # как на Mac, см. комментарий в _decode
+    # Окно всегда полные 30 секунд, даже для фразы в две: движок умеет
+    # слушать только длину фразы (audio_ctx), и это в разы быстрее, но
+    # обычные модели Whisper на укороченном окне начинают перевирать и
+    # зацикливаться (замер 2026-09-13: ошибка base выросла с 14% до 25–66%).
 
     def __init__(self, engine_exe: Path, models_dir: Path, log_dir: Path,
                  model_name: str = DEFAULT_MODEL, server_factory=None):
@@ -62,6 +66,11 @@ class Transcriber:
         self._ready = False
         self._loading = False
         self._lock = threading.Lock()
+        # Сколько длился прогрев секундой тишины. Фраза до 30 секунд стоит
+        # почти столько же (окно всегда полное), так что это честный замер
+        # скорости компьютера — по нему подбирается модель
+        self.warmup_sec: float | None = None
+        self.last_infer_sec: float | None = None   # последний запрос к движку
 
     # --- Загрузка ------------------------------------------------------------
 
@@ -86,16 +95,26 @@ class Transcriber:
             log_path=self.log_dir / "whisper-server.log",
             use_gpu=self.use_gpu, no_speech_thold=self.NO_SPEECH_THOLD)
 
+    def _warm_up(self) -> float:
+        wav = to_wav_bytes(np.zeros(SAMPLE_RATE, dtype=np.float32))
+        t0 = time.monotonic()
+        self._server.inference(wav, self._fields("ru"))
+        took = time.monotonic() - t0
+        # На видеокарте первый прогон ещё и собирает вычислительные программы
+        # под неё — замеряем второй. На процессоре первый и так честный.
+        if self.use_gpu and took < 5.0:
+            t0 = time.monotonic()
+            self._server.inference(wav, self._fields("ru"))
+            took = min(took, time.monotonic() - t0)
+        return took
+
     def _start_server(self) -> None:
         self._server = self._make_server()
         try:
             self._server.start()
-            # Прогрев секундой тишины: на видеокарте первый запуск собирает
-            # вычислительные программы под неё, пусть это случится сейчас,
+            # Прогрев: пусть всё медленное первого запуска случится сейчас,
             # а не на первой диктовке
-            self._server.inference(
-                to_wav_bytes(np.zeros(SAMPLE_RATE, dtype=np.float32)),
-                self._fields("ru"))
+            self.warmup_sec = self._warm_up()
         except EngineError:
             self._server.stop()
             if not self.use_gpu:
@@ -104,6 +123,9 @@ class Transcriber:
             self._disable_gpu()
             self._server = self._make_server()
             self._server.start()
+            self.warmup_sec = self._warm_up()
+        log.info("Прогрев модели: %.2f c на фразу (%s)", self.warmup_sec,
+                 self._server.device)
 
     def _disable_gpu(self) -> None:
         self.use_gpu = False
@@ -168,6 +190,10 @@ class Transcriber:
             "no_speech_thold": str(self.NO_SPEECH_THOLD),
             # Вероятности всех языков нам не нужны, а считаются отдельно
             "no_language_probabilities": True,
+            # Время каждого отдельного слова не нужно: хватает границ фраз.
+            # Без этого движок ещё и режет фразы на куски по 60 символов
+            # посреди слова, а по границам фраз мы двигаем окна.
+            "token_timestamps": False,
         }
         if prompt:
             fields["prompt"] = prompt
@@ -177,8 +203,11 @@ class Transcriber:
         wav = to_wav_bytes(audio)
         fields = self._fields(lang, prompt)
         timeout = 120 + 10 * len(audio) / SAMPLE_RATE
+        t0 = time.monotonic()
         try:
-            return self._server.inference(wav, fields, timeout=timeout)
+            res = self._server.inference(wav, fields, timeout=timeout)
+            self.last_infer_sec = time.monotonic() - t0
+            return res
         except EngineError as exc:
             if self._server and self._server.running:
                 raise
@@ -206,6 +235,9 @@ class Transcriber:
             res = self._infer(chunk, lang, prompt if first else None)
             first = False
             language = language or to_code(res.get("language"))
+            # Язык определяем один раз, по первому окну (как mlx-whisper на
+            # Mac): определение — это лишний проход модели на каждое окно
+            lang = lang or language
             win = []
             for seg in res.get("segments") or []:
                 text = seg.get("text") or ""

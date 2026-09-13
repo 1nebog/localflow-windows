@@ -14,6 +14,7 @@ on:
       - "localflow/**"
       - "tests/**"
       - "tools/fetch_models.py"
+      - "engine/**"
       - ".github/workflows/engine.yml"
   workflow_dispatch:
     inputs:
@@ -28,19 +29,25 @@ env:
   PYTHONIOENCODING: utf-8
   WHISPER_REF: b5130
   VULKAN_VERSION: 1.4.357.0
-  ENGINE_REV: "1"   # поменять, чтобы пересобрать без смены версии
+  ENGINE_REV: "2"   # поменять, чтобы пересобрать без смены версии
 
 jobs:
   build-whisper:
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
+      - name: Заплатки движка
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: engine
+          path: app
+
       - name: Готовая сборка из кэша
         id: cache
         uses: actions/cache@v4
         with:
           path: whisper-engine
-          key: whisper-${{ env.WHISPER_REF }}-vk${{ env.VULKAN_VERSION }}-r${{ env.ENGINE_REV }}
+          key: whisper-${{ env.WHISPER_REF }}-vk${{ env.VULKAN_VERSION }}-r${{ env.ENGINE_REV }}-${{ hashFiles('app/engine/patches/*.patch') }}
 
       - name: Исходники whisper.cpp
         if: steps.cache.outputs.cache-hit != 'true'
@@ -49,6 +56,16 @@ jobs:
           repository: ggml-org/whisper.cpp
           ref: ${{ env.WHISPER_REF }}
           path: src
+
+      - name: Наложить заплатки
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          foreach ($p in Get-ChildItem app\engine\patches\*.patch) {
+            Write-Host "Заплатка: $($p.Name)"
+            git -C src apply --ignore-whitespace --verbose $p.FullName
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
 
       - name: Vulkan SDK
         if: steps.cache.outputs.cache-hit != 'true'
@@ -89,7 +106,8 @@ jobs:
           Write-Host "CRT: $crt"
           Copy-Item "$crt\*.dll" whisper-engine\
           Copy-Item src\LICENSE whisper-engine\LICENSE-whisper.cpp.txt
-          "whisper.cpp $env:WHISPER_REF, Vulkan SDK $env:VULKAN_VERSION" | Out-File whisper-engine\VERSION.txt
+          $patches = (Get-ChildItem app\engine\patches\*.patch | ForEach-Object Name) -join ", "
+          "whisper.cpp $env:WHISPER_REF + $patches, Vulkan SDK $env:VULKAN_VERSION" | Out-File whisper-engine\VERSION.txt
           Get-ChildItem whisper-engine | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
@@ -104,7 +122,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        model: [base, large-v3-turbo]
+        # turbo на процессоре раннера уже замерен (фраза ~35 c), он для видеокарт
+        model: [base, small]
     steps:
       - uses: actions/checkout@v4
 

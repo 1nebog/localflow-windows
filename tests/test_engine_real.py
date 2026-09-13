@@ -57,7 +57,8 @@ def tr(request, tmp_path_factory):
     t0 = time.monotonic()
     assert t.load(), (logs / "whisper-server.log").read_text(errors="replace")
     print(f"\n[{request.param}] модель {MODEL} загружена за "
-          f"{time.monotonic() - t0:.1f} c, считает: {t.device}")
+          f"{time.monotonic() - t0:.1f} c, считает: {t.device}, "
+          f"прогрев (≈ время фразы): {t.warmup_sec:.2f} c")
     print("--- журнал движка (начало) ---")
     print("\n".join((logs / "whisper-server.log").read_text(
         errors="replace").splitlines()[:60]))
@@ -95,6 +96,27 @@ def test_silence_at_start_no_prompt_echo(tr):
     text = timed("тишина в начале", tr.transcribe, audio)
     assert not found(text, ["аккуратная диктовка", "as is", "английские слова", "термины"])
     assert len(found(text, ["провер", "распозна", "движ", "диктов"])) >= 2
+
+
+def test_auto_language_costs_no_extra_pass(tr):
+    """Заплатка движка: определение языка не прогоняет запись второй раз.
+    Без неё автоязык на base медленнее заданного языка в ~1.7 раза."""
+    audio = read_wav(FIX / "en.wav")
+
+    def best(lang):
+        # одна и та же подсказка: сравниваем только определение языка
+        runs = []
+        for _ in range(3):
+            t0 = time.monotonic()
+            text = tr._decode(audio, lang, None)["text"]
+            runs.append(time.monotonic() - t0)
+        return min(runs), text
+
+    fixed, text_fixed = best("en")
+    auto, text_auto = best(None)
+    print(f"\nязык задан: {fixed:.2f} c, автоопределение: {auto:.2f} c")
+    assert text_auto == text_fixed
+    assert auto < fixed * 1.25 + 0.05
 
 
 # Чистую тишину здесь не проверяем: на ней Whisper выдумывает фразы
