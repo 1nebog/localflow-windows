@@ -230,13 +230,18 @@ jobs:
           $setup = Get-ChildItem build\LocalFlow-Setup-*.exe | Select-Object -First 1
           python tools/check_installer.py $setup.FullName --models models
 
+      - name: Журналы в одну папку
+        if: always()
+        shell: pwsh
+        run: Copy-Item "$env:LOCALAPPDATA\LocalFlow\logs\localflow.log" build\ -ErrorAction SilentlyContinue
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: install-log
           path: |
             build/install.log
-            ~/AppData/Local/LocalFlow/logs/localflow.log
+            build/localflow.log
           retention-days: 14
 
   publish-app:

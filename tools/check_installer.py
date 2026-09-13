@@ -122,14 +122,16 @@ def main() -> None:
     step("Тихое удаление")
     subprocess.run([str(APP_DIR / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
                    check=True)
-    for _ in range(60):                   # удалятор доделывает работу в фоне
-        if not EXE.exists():
+    for _ in range(120):                  # удалятор доделывает работу в фоне
+        if not EXE.exists() and run_value() is None and not APP_DIR.exists():
             break
         time.sleep(0.5)
     if EXE.exists():
         fail("программа не удалилась")
     if run_value() is not None:
         fail("автозапуск остался после удаления")
+    if not (DATA / "models").exists():
+        fail("тихое удаление стёрло модели — без вопроса их трогать нельзя")
     print("\nВсё в порядке")
 
 
