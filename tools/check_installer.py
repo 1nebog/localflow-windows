@@ -49,6 +49,15 @@ def wait_log(marker: str, timeout: float) -> float:
     fail(f"в журнале нет «{marker}» за {timeout:.0f} c")
 
 
+def wait_log_count(marker: str, count: int, timeout: float) -> None:
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout:
+        if log_text().count(marker) >= count:
+            return
+        time.sleep(0.5)
+    fail(f"в журнале нет {count}-го «{marker}» за {timeout:.0f} c")
+
+
 def run_value() -> str | None:
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
@@ -118,6 +127,19 @@ def main() -> None:
         fail("движок остался висеть после выхода")
     if "Traceback" in log_text():
         fail("в журнале есть ошибки Python")
+
+    step("Обновление поверх запущенной программы")
+    proc = subprocess.Popen([str(EXE)])
+    wait_log_count("Перехват клавиатуры включён", 2, 60)
+    subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+                    "/TASKS=autostart", f"/LOG={setup.parent / 'update.log'}"], check=True, timeout=180)
+    try:
+        proc.wait(20)                      # установщик сам закрыл старую копию
+    except subprocess.TimeoutExpired:
+        fail("установщик не закрыл запущенную программу")
+    if not EXE.exists():
+        fail("после обновления нет LocalFlow.exe")
+    print("обновилось, старая копия закрыта")
 
     step("Тихое удаление")
     subprocess.run([str(APP_DIR / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
