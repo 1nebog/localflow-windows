@@ -1,2 +1,7 @@
 numpy>=1.26,<3
 sounddevice>=0.4.6
+# пауза музыки через системный пульт медиа Windows
+winrt-runtime>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Foundation.Collections>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Media.Control>=3.2,<4; sys_platform == "win32"

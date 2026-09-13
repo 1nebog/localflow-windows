@@ -1,16 +1,16 @@
 """Меню и состояние значка в трее — без Windows, чтобы проверять тестами.
 
-Пункты по образцу меню версии для Mac (модель, язык, стиль, перевод, метод
-вставки, язык интерфейса, история), плюс пауза: на Windows клавиша диктовки
-может мешать в играх.
+Пункты по образцу меню версии для Mac (модель, умное исправление, язык,
+стиль, перевод, метод вставки, язык интерфейса, история), плюс пауза: на
+Windows клавиша диктовки может мешать в играх.
 """
 
 from dataclasses import dataclass, field
 from typing import Callable
 
 from . import core
-from .core import MODEL_LABELS, TRANSLATE_TARGETS, lang_label, tr
-from .engine.catalog import WHISPER_MODELS
+from .core import LLM_MODES, MODEL_LABELS, TRANSLATE_TARGETS, lang_label, tr
+from .engine.catalog import LLM_MODELS, WHISPER_MODELS
 from .engine.download import is_ready
 from .keys import key_name, normalize
 
@@ -61,6 +61,27 @@ def tray_state(app) -> str:
     return "loading"
 
 
+def gb(size: int) -> str:
+    """«2,5 ГБ», «5 ГБ»."""
+    num = f"{size / 1e9:.1f}".removesuffix(".0")
+    if core._UI_LANG != "en":
+        num = num.replace(".", ",")
+    return f"{num} {tr('gb')}"
+
+
+def polisher_status(app) -> str:
+    """Что делает умное исправление, если есть что сказать. Пусто — ничего."""
+    p = getattr(app, "polisher", None)
+    if p is None or not p.enabled:
+        return ""
+    if p.progress is not None:
+        have, total = p.progress
+        return tr("st_llm_download").format(pct=f"{have * 100 // total}%" if total else "").strip()
+    if p.is_loading:
+        return tr("llm_loading")
+    return ""
+
+
 def status_text(app) -> str:
     state = tray_state(app)
     if state == "paused":
@@ -84,7 +105,7 @@ def status_text(app) -> str:
         return tr("st_error")
     if state == "loading":
         return tr("st_loading")
-    return tr("st_ready").format(key=pretty_key(app.keys.hotkey))
+    return polisher_status(app) or tr("st_ready").format(key=pretty_key(app.keys.hotkey))
 
 
 def tooltip(app) -> str:
@@ -110,6 +131,18 @@ def _model_items(app) -> list[Item]:
         items.append(Item(label, (lambda k=key: app.choose_model(k)),
                           checked=not auto and key == current))
     return items
+
+
+def llm_options(app) -> list[tuple[str, str]]:
+    """Режимы умного исправления; у нескачанной модели — её размер."""
+    out = []
+    for mode in LLM_MODES:
+        label = tr("llm_" + mode)
+        model = LLM_MODELS.get(mode)
+        if model is not None and not app.polisher.downloaded(mode):
+            label += f" · {gb(model.size)}"
+        out.append((mode, label))
+    return out
 
 
 def _history_items(app) -> list[Item]:
@@ -138,9 +171,12 @@ def build(app) -> list:
         Item(tr("menu_settings"), app.open_panel, focus_back=False),
         None,
         Item(tr("model"), children=_model_items(app)),
+        Item(tr("llm"), children=_radio(llm_options(app), app.polisher.mode, app.set_llm_mode)),
         Item(tr("language"), children=_radio(langs, app.transcriber.language, app.set_language)),
         Item(tr("style"), children=_radio(styles, d.style, app.set_style)),
-        Item(tr("translate_to"), children=_radio(targets, d.translate_to, app.set_translate)),
+        # переводит модель исправления — без неё пункт не работает
+        Item(tr("translate_to"), children=_radio(targets, d.translate_to, app.set_translate),
+             enabled=app.polisher.enabled),
         Item(tr("paste"), children=_radio(pastes, d.paste_method, app.set_paste)),
         Item(tr("ui_lang"), children=_radio(UI_LANGS, core._UI_LANG, app.set_ui_lang)),
         Item(tr("history"), children=_history_items(app)),

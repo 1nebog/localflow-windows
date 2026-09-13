@@ -49,6 +49,10 @@ def make_app(tmp_path):
         set_sounds=calls.set_sounds, set_autostart=calls.set_autostart,
         set_profiles=calls.set_profiles, delete_history=calls.delete_history,
         clear_history=calls.clear_history,
+        polisher=SimpleNamespace(mode="off", enabled=False, progress=None, is_loading=False,
+                                 downloaded=lambda mode: False),
+        media=SimpleNamespace(enabled=True),
+        set_llm_mode=calls.set_llm_mode, set_media_pause=calls.set_media_pause,
     )
     return app, calls
 
@@ -78,9 +82,12 @@ def test_snapshot(tmp_path):
     assert st["model"] == "auto" and opt["model"][0] == ["auto", "Авто · base"]
     assert opt["mic"] == [["", "Как в системе"], ["USB Mic", "USB Mic"]]
     assert ["0", "Никогда"] in opt["idle_unload_min"] and st["idle_unload_min"] == "10"
+    assert st["llm_mode"] == "off" and st["pause_media"] is True
+    assert opt["llm_mode"] == [["off", "Выключено"], ["fast", "Быстро · 2,5 ГБ"],
+                               ["quality", "Точно (тяжелее) · 5 ГБ"]]
     assert data["apps"] == ["Telegram", "Word"]
     assert data["history"][0] == {"ts": 2.0, "text": "вторая"}
-    for key in ("language", "translate_to", "paste_method", "style", "pill_animation", "ui_lang"):
+    for key in ("language", "translate_to", "paste_method", "style", "pill_animation", "ui_lang", "llm_mode"):
         assert st[key] in [v for v, _ in opt[key]], key
 
 
@@ -93,13 +100,17 @@ def test_apply_settings(tmp_path):
     assert panel.apply(app, "idle_unload_min", "30")
     assert panel.apply(app, "pill_animation", "orbit")
     assert panel.apply(app, "sounds", False)
+    assert panel.apply(app, "llm_mode", "fast")
+    assert panel.apply(app, "pause_media", False)
+    assert not panel.apply(app, "llm_mode", "huge")
     assert not panel.apply(app, "model", "gigantic")
     assert not panel.apply(app, "language", "xx")
     assert not panel.apply(app, "sounds", "yes")        # переключатель — только да/нет
     assert not panel.apply(app, "hack", "1")
     assert calls == [("choose_model", None), ("choose_model", "small"), ("set_mic", None),
                      ("set_language", "en"), ("set_idle_unload", 30),
-                     ("set_animation", "orbit"), ("set_sounds", False)]
+                     ("set_animation", "orbit"), ("set_sounds", False),
+                     ("set_llm_mode", "fast"), ("set_media_pause", False)]
 
 
 def test_clean_profiles_and_pairs():

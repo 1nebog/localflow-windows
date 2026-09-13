@@ -49,6 +49,8 @@ PANEL_STRINGS = {
         "set_model": "Модель", "set_idle": "Выгружать из памяти при простое",
         "set_autostart": "Запускать вместе с Windows", "set_sounds": "Звуки",
         "set_anim": "Подсветка таблетки", "set_uilang": "Язык интерфейса",
+        "set_llm": "Умное исправление", "llm_needed": "Нужно умное исправление",
+        "set_media": "Пауза музыки при записи",
         "set_profiles": "Программы", "prof_hint": "Свои настройки для отдельных программ.",
         "ph_app": "Программа", "opt_default": "(как везде)",
         "search": "Поиск…", "clear_all": "Очистить всё",
@@ -77,6 +79,8 @@ PANEL_STRINGS = {
         "set_model": "Model", "set_idle": "Free memory when idle",
         "set_autostart": "Start with Windows", "set_sounds": "Sounds",
         "set_anim": "Pill glow", "set_uilang": "Interface language",
+        "set_llm": "Smart correction", "llm_needed": "Needs smart correction",
+        "set_media": "Pause music while recording",
         "set_profiles": "Apps", "prof_hint": "Separate settings for specific apps.",
         "ph_app": "App", "opt_default": "(same as global)",
         "search": "Search…", "clear_all": "Clear all",
@@ -105,6 +109,8 @@ PANEL_STRINGS = {
         "set_model": "Модель", "set_idle": "Вивантажувати з пам'яті під час простою",
         "set_autostart": "Запускати разом з Windows", "set_sounds": "Звуки",
         "set_anim": "Підсвітка таблетки", "set_uilang": "Мова інтерфейсу",
+        "set_llm": "Розумне виправлення", "llm_needed": "Потрібне розумне виправлення",
+        "set_media": "Пауза музики під час запису",
         "set_profiles": "Програми", "prof_hint": "Свої налаштування для окремих програм.",
         "ph_app": "Програма", "opt_default": "(як усюди)",
         "search": "Пошук…", "clear_all": "Очистити все",
@@ -133,6 +139,8 @@ PANEL_STRINGS = {
         "set_model": "Modell", "set_idle": "Speicher bei Leerlauf freigeben",
         "set_autostart": "Mit Windows starten", "set_sounds": "Töne",
         "set_anim": "Kapsel-Leuchten", "set_uilang": "Sprache der Oberfläche",
+        "set_llm": "Intelligente Korrektur", "llm_needed": "Braucht intelligente Korrektur",
+        "set_media": "Musik beim Aufnehmen pausieren",
         "set_profiles": "Programme", "prof_hint": "Eigene Einstellungen für einzelne Programme.",
         "ph_app": "Programm", "opt_default": "(wie überall)",
         "search": "Suchen…", "clear_all": "Alles löschen",
@@ -174,6 +182,7 @@ def options(app, mics: list[dict] | None = None) -> dict:
             for m in core.IDLE_UNLOAD_OPTIONS]
     return {
         "model": models,
+        "llm_mode": [list(x) for x in menu.llm_options(app)],
         "mic": mic_options(app, mics),
         "language": [[c, tr("lang_auto") if c == "auto" else lang_label(c)] for c in core.LANGUAGES],
         "translate_to": [[c, tr("translate_off") if c == "off" else lang_label(c)]
@@ -198,6 +207,7 @@ def settings(app) -> dict:
         "hotkey_default": tuple(app.keys.hotkey) == DEFAULT_HOTKEY,
         "mic": app.recorder.device or "",
         "model": "auto" if app.autotune.auto else app.transcriber.model_name,
+        "llm_mode": app.polisher.mode,
         "language": app.transcriber.language,
         "translate_to": d.translate_to,
         "paste_method": d.paste_method,
@@ -206,6 +216,7 @@ def settings(app) -> dict:
         "idle_unload_min": str(d.idle_unload_min),
         "autostart": bool(app.autostart_enabled()),
         "sounds": bool(app.sounds.enabled),
+        "pause_media": bool(app.media.enabled),
         "ui_lang": core._UI_LANG,
         "profiles": d.app_profiles,
     }
@@ -228,7 +239,8 @@ def snapshot(app, mics: list[dict] | None = None) -> dict:
 def apply(app, key: str, value) -> bool:
     """Настройка со страницы. Неизвестное и недопустимое — False."""
     if isinstance(value, bool):
-        switches = {"autostart": app.set_autostart, "sounds": app.set_sounds}
+        switches = {"autostart": app.set_autostart, "sounds": app.set_sounds,
+                    "pause_media": app.set_media_pause}
         if key not in switches:
             return False
         return switches[key](value) is not False
@@ -245,6 +257,8 @@ def apply(app, key: str, value) -> bool:
         return False
     if key == "model":
         app.choose_model(None if value == "auto" else value)
+    elif key == "llm_mode":
+        app.set_llm_mode(value)
     elif key == "language":
         app.set_language(value)
     elif key == "translate_to":
@@ -643,6 +657,7 @@ textarea{resize:vertical;min-height:34px}
 .set-row select{min-width:210px;max-width:290px}
 .note{font-size:12px;color:var(--muted)}
 .note.err{color:var(--danger)}
+select:disabled{opacity:.55;cursor:default}
 kbd{font:600 13px "Segoe UI",system-ui,sans-serif;background:var(--bg);border:1px solid var(--border);
   border-bottom-width:2px;border-radius:6px;padding:4px 10px;white-space:nowrap}
 kbd.wait{color:var(--accent);border-color:var(--accent);animation:blink 1.2s infinite}
@@ -851,12 +866,13 @@ function renderSettings(){
         <kbd id="hkLabel">${esc(st.hotkey)}</kbd>
         <button class="btn ghost" id="hkBtn">${L.hk_change}</button></div>`+
     row(L.set_mic,pick('mic'))+row(L.set_language,pick('language'))+
-    row(L.set_translate,pick('translate_to'))+row(L.set_style,pick('style'))+
+    `<div class="set-row"><span class="name">${L.set_translate}<div class="note" id="trNote"></div></span>${pick('translate_to')}</div>`+
+    row(L.set_style,pick('style'))+
     row(L.set_paste,pick('paste_method'))+
     `</div><div class="sec-title">${L.sec_model}</div><div class="group">`+
-    row(L.set_model,pick('model'))+row(L.set_idle,pick('idle_unload_min'))+
+    row(L.set_model,pick('model'))+row(L.set_llm,pick('llm_mode'))+row(L.set_idle,pick('idle_unload_min'))+
     `</div><div class="sec-title">${L.sec_app}</div><div class="group">`+
-    row(L.set_autostart,sw('autostart'))+row(L.set_sounds,sw('sounds'))+
+    row(L.set_autostart,sw('autostart'))+row(L.set_sounds,sw('sounds'))+row(L.set_media,sw('pause_media'))+
     row(L.set_anim,pick('pill_animation'))+row(L.set_uilang,pick('ui_lang'))+
     `</div><div class="sec-title">${L.set_profiles}</div><div class="hint">${L.prof_hint}</div>
      <div id="profiles"></div><button class="btn ghost" id="addProf">${L.add}</button>`;
@@ -868,10 +884,16 @@ function renderSettings(){
       micSel.innerHTML=r.options.map(([v,l])=>`<option value="${esc(v)}"${v===r.current?' selected':''}>${esc(l)}</option>`).join('');}
     catch(e){}
   };
+  /* переводит модель исправления: без неё выбор перевода ни на что не влияет */
+  const syncTranslate=()=>{const off=st.llm_mode==='off';
+    c.querySelector('select[data-key="translate_to"]').disabled=off;
+    $('#trNote').textContent=off?L.llm_needed:'';};
+  syncTranslate();
   c.querySelectorAll('.set-row select').forEach(s=>s.onchange=async()=>{
     const r=await post('/api/settings',{key:s.dataset.key,value:s.value});
     if(r.ok)st[s.dataset.key]=s.value;
     if(r.reload)location.reload();
+    syncTranslate();
   });
   c.querySelectorAll('[data-switch]').forEach(s=>s.onchange=async()=>{
     const key=s.dataset.switch;

@@ -24,6 +24,11 @@
 - **Зажми правый Ctrl** и говори. Отпустил — текст вставился.
 - **Коротко нажми** — запись идёт сама. Закончить — нажми ещё раз или **Enter**.
 - **Esc** — отменить.
+- **Умное исправление** (в настройках) — нейросеть на компьютере причёсывает
+  текст. Модель скачивается один раз: 2,5 ГБ или 5 ГБ.
+- С ним работают перевод («по-английски, …») и правка только что
+  вставленного голосом: «покороче», «списком», «формальнее».
+- Пока говоришь, музыка и видео стоят на паузе.
 - Значок у часов: меню, история, пауза. **Настройки…** — клавиша,
   микрофон, язык, модель, автозапуск.
 
@@ -60,6 +65,11 @@ Requires Windows 10 or 11 (64-bit). A graphics card is optional.
 - **Hold Right Ctrl** and speak. Release — the text is pasted.
 - **Tap** to keep recording hands-free. Tap again or press **Enter** to finish.
 - **Esc** cancels.
+- **Smart correction** (in Settings) — an on-device AI model tidies up the
+  text. The model downloads once: 2.5 GB or 5 GB.
+- It also enables translation and voice edits of the text you just pasted
+  (Russian commands like «покороче» — "shorter").
+- Music and videos pause while you speak.
 - Tray icon: menu, history, pause. **Settings…** — key, microphone,
   language, model, start with Windows.
 
@@ -71,3 +81,5 @@ also delete settings, history and downloaded models.
 ## License
 
 MIT. Speech recognition: [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT).
+Smart correction: [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) with
+[Qwen3](https://huggingface.co/Qwen) models (Apache 2.0).

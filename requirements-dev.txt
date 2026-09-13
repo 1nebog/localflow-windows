@@ -1,3 +1,7 @@
 -r requirements.txt
 pytest>=8
 pyflakes>=3
+# настоящий плеер для проверки паузы музыки
+winrt-Windows.Media>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Media.Core>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Media.Playback>=3.2,<4; sys_platform == "win32"

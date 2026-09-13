@@ -15,6 +15,9 @@
   быстро: на медленном каждая проверка тормозила бы основную работу;
 - если микрофон запрещён в настройках приватности Windows, запись идёт,
   но звука в ней нет вовсе — об этом говорим прямо.
+
+Умное исправление, перевод и правка голосом («покороче») — через
+`polisher.TextPolisher`, пауза музыки — через `win/media.py`.
 """
 
 import logging
@@ -28,7 +31,7 @@ import numpy as np
 from . import core, strings
 from .core import (
     LANG_NAMES, MIN_DURATION_SEC, SAMPLE_RATE, SILENCE_PEAK_LEVEL, add_stats,
-    casual_tone, clear_recovery, email_tone, extract_translate_cmd,
+    casual_tone, clear_recovery, email_tone, extract_rewrite_cmd, extract_translate_cmd,
     is_hallucination, is_messenger_app, is_voice_cancel, load_recovery,
     notes_tone, prune_history, save_history, save_recovery, structure_by_voice,
     title_terms, tr,
@@ -55,6 +58,16 @@ class NullIndicator:
         pass
 
 
+class NullMedia:
+    """Пауза музыки-заглушка."""
+
+    def pause(self):
+        pass
+
+    def resume(self):
+        pass
+
+
 class Dictation:
     TAP_THRESHOLD = 0.3  # секунд: короче — «тап» (замок), дольше — удержание
     UNDO_WINDOW = 10.0   # секунд после вставки, когда Esc делает откат
@@ -78,10 +91,16 @@ class Dictation:
     VOICE_CANCEL_TRIES = 3     # проверок на одну паузу
     VOICE_CANCEL_EVERY = 1.1   # секунд между проверками
 
+    # Сколько секунд после вставки фраза-команда считается правкой этой
+    # вставки, а не новой диктовкой. Хватает, чтобы прочитать и передумать;
+    # дольше держать нельзя — Ctrl+Z уедет в чужие изменения.
+    VOICE_EDIT_WINDOW = 180.0
+    POLISH_WAKE_WAIT = 8.0     # сколько ждём просыпающуюся модель исправления
+
     def __init__(self, transcriber, recorder, keys, *, paste, sounds,
                  indicator=None, frontmost_app=lambda: "",
                  window_title=lambda: "", notify=None, autodict=None,
-                 history=None):
+                 history=None, polisher=None, media=None):
         self.transcriber = transcriber
         self.recorder = recorder
         self.keys = keys                # KeyboardLogic: Enter взводим отсюда
@@ -92,7 +111,9 @@ class Dictation:
         self._window_title = window_title
         self._notify = notify or (lambda title, msg: log.info("%s: %s", title, msg))
         self.autodict = autodict
-        self.polisher = None            # умное исправление — следующий этап
+        self.polisher = polisher        # умное исправление (None — нет вовсе)
+        self.media = media or NullMedia()
+        self.voice_edit = True
 
         self.paste_method = "clipboard"
         self.style = core.DEFAULT_STYLE
@@ -190,6 +211,9 @@ class Dictation:
         if not (self.transcriber.is_ready or self.transcriber.is_loading):
             log.info("Просыпаюсь: гружу Whisper обратно")
             self.transcriber.load_async()
+        p = self.polisher
+        if p is not None and p.enabled and not p.ready and not p.is_loading:
+            p.set_mode(p.mode)
 
     def _begin_recording(self) -> None:
         # Таблетка — первым делом: остальное занимает десятки миллисекунд
@@ -197,10 +221,12 @@ class Dictation:
         self._active_app = self._frontmost_app()
         self._active_title = self._window_title()
         self._wake_models()
+        self.media.pause()
         try:
             self.recorder.start()
         except Exception as exc:
             log.error("Не удалось начать запись: %s", exc)
+            self.media.resume()
             self.indicator.hide()
             self._notify(tr("mic_title"), tr("mic_msg"))
             return
@@ -219,6 +245,7 @@ class Dictation:
             self._locked = False
             self.keys.enter_armed = False
             self.recorder.stop()
+        self.media.resume()
         log.info("Запись отменена (%s)", reason)
         if quiet:
             self.indicator.hide()
@@ -300,6 +327,7 @@ class Dictation:
                 return
             self.keys.enter_armed = False
             audio = self.recorder.stop()
+        self.media.resume()
         self.sounds.play("stop")
 
         duration = len(audio) / SAMPLE_RATE
@@ -360,6 +388,79 @@ class Dictation:
         target = self.translate_to
         return (target if target in LANG_NAMES else None), text
 
+    def _polisher_on(self) -> bool:
+        return self.polisher is not None and self.polisher.enabled
+
+    def _try_voice_edit(self, text: str, ctx: dict) -> bool:
+        """Фраза целиком — команда правки вставленного? Тогда переписываем.
+
+        Возвращает True, если диктовка обработана как правка и обычный путь
+        вставки не нужен.
+        """
+        if not self.voice_edit or not self._last_paste_text:
+            return False
+        if time.monotonic() - self._last_paste_t > self.VOICE_EDIT_WINDOW:
+            return False
+        if not (self._polisher_on() and self.polisher.ready):
+            return False
+        cmd = extract_rewrite_cmd(text)
+        if not cmd:
+            return False
+        src = self._last_paste_text
+        log.info("Правка голосом: %r над %d символами", cmd["key"], len(src))
+        self.indicator.show_text(tr("editing"), glow="green")
+        if cmd.get("translate"):
+            out, ok = self.polisher.translate(src, cmd["translate"], ctx)
+        else:
+            out, ok = self.polisher.rewrite(src, cmd["instruction"], cmd["bounds"], ctx)
+        if not ok or out == src:
+            log.info("Правка голосом не удалась — текст оставляю как был")
+            self.indicator.show_text(tr("edit_failed"), glow="red")
+            self.indicator.hide(after=1.4)
+            return True
+        # Убираем прежнюю вставку руками программы (Ctrl+Z), потом вставляем
+        # новую тем же методом. Пауза — чтобы тяжёлая страница успела
+        # доиграть откат, иначе новый текст допишется к старому.
+        profile = self.app_profiles.get(self._active_app, {})
+        method = profile.get("paste_method", self.paste_method)
+        self.paste.undo()
+        time.sleep(0.3)
+        if not self.paste.paste_text(out, method):
+            self._notify(tr("paste_blocked_title"), tr("paste_blocked_msg"))
+        self._last_paste_t = time.monotonic()
+        self._last_use_t = self._last_paste_t
+        self._last_paste_text = out
+        self._undo_armed = True
+        self._add_history(out, src)
+        return True
+
+    def _polish_or_translate(self, text: str, target: str | None, ctx: dict) -> str:
+        """Умное исправление: последний шаг ПЕРЕД стилем, чтобы стиль
+        (чат/письмо/заметки) применялся к уже причёсанному тексту. Сниппеты
+        и команды редактора модель не трогает."""
+        p = self.polisher
+        if not (text and self._polisher_on() and not self.transcriber.last_verbatim):
+            return text
+        if p.is_loading:
+            # Модель правки ещё просыпается — подождём чуть-чуть, но не
+            # будем держать вставку до бесконечности
+            deadline = time.monotonic() + self.POLISH_WAKE_WAIT
+            while p.is_loading and time.monotonic() < deadline:
+                time.sleep(0.15)
+        if not p.ready:
+            return text
+        out_lang = self.transcriber.last_language
+        if target:
+            # Перевод делает и чистку речи заодно: один проход модели
+            self.indicator.show_text(tr("translating"), glow="green")
+            text, ok = p.translate(text, target, ctx)
+            if not ok:
+                # Не перевелось — вставляем оригинал, но причёсанный
+                text = p.polish(text, out_lang, ctx)
+            return text
+        self.indicator.show_text(tr("polishing"), glow="green")
+        return p.polish(text, out_lang, ctx)
+
     def _apply_style(self, text: str) -> str:
         profile = self.app_profiles.get(self._active_app, {})
         style = self.style
@@ -411,8 +512,19 @@ class Dictation:
                 self.sounds.play("cancel")
                 self.indicator.show_text(tr("cancelled"), glow="red")
                 text = ""
-            _target, text = self._resolve_translate(text)
-            raw_text = text
+            # Правка голосом: вся фраза — команда («покороче»), и совсем
+            # недавно мы что-то вставили. Это не новая диктовка, а указание
+            # переписать уже вставленное.
+            if text and self._try_voice_edit(text, ctx):
+                clear_recovery()
+                return
+            # Разовая команда перевода в начале фразы важнее постоянной
+            # настройки — «по-английски, …» работает и при выключенном режиме
+            target, text = self._resolve_translate(text)
+            raw_text = text  # каким текст был ДО умного исправления
+            text = self._polish_or_translate(text, target, ctx)
+            # Структура голосом — после правки: модель уже расставила
+            # границы предложений, по которым режется перечень
             if text and self.voice_structure and not self.transcriber.last_verbatim:
                 text = structure_by_voice(text)
             if text:
@@ -465,9 +577,19 @@ class Dictation:
             log.info("Нашёл несохранённую запись (%.1f c) — восстанавливаю",
                      len(audio) / SAMPLE_RATE)
             text = self.transcriber.transcribe(audio)
+            raw_text = text
+            # Восстановленный текст заслуживает той же правки, что и обычный.
+            # Модель на старте ещё грузится — подождём, человек уже ушёл
+            p = self.polisher
+            if text and self._polisher_on() and not self.transcriber.last_verbatim:
+                deadline = time.monotonic() + 25.0
+                while p.is_loading and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                if p.ready:
+                    text = p.polish(text, self.transcriber.last_language)
             if text:
                 self.paste.set_clipboard(text)
-                self._add_history(text)
+                self._add_history(text, raw_text)
                 self._notify(tr("recovered_title"), tr("recovered_msg"))
                 log.info("Восстановлено: %r", text)
         except Exception as exc:
@@ -481,8 +603,12 @@ class Dictation:
             return False
         if time.monotonic() - self._last_use_t < self.idle_unload_min * 60:
             return False
-        if not self.transcriber.is_ready:
+        polisher_ready = self.polisher is not None and self.polisher.ready
+        if not (self.transcriber.is_ready or polisher_ready):
             return False
-        log.info("Простой %d мин — выгружаю модель", self.idle_unload_min)
+        log.info("Простой %d мин — выгружаю модели, память возвращается системе",
+                 self.idle_unload_min)
+        if polisher_ready:
+            self.polisher.unload()
         self.transcriber.unload()
         return True

@@ -41,6 +41,7 @@ WIN_STRINGS = {
         "key_right": "правый {key}",
         "model_failed": "Модель {model} не запустилась — вернул прежнюю",
         "menu_settings": "Настройки…", "mic_default": "Как в системе", "idle_never": "Никогда",
+        "gb": "ГБ", "st_llm_download": "Скачиваю модель исправления… {pct}",
     },
     "en": {
         "mic_title": "Microphone unavailable",
@@ -76,6 +77,7 @@ WIN_STRINGS = {
         "key_right": "Right {key}",
         "model_failed": "Model {model} didn't start — back to the previous one",
         "menu_settings": "Settings…", "mic_default": "System default", "idle_never": "Never",
+        "gb": "GB", "st_llm_download": "Downloading the correction model… {pct}",
     },
     "uk": {
         "mic_title": "Мікрофон недоступний",
@@ -111,6 +113,7 @@ WIN_STRINGS = {
         "key_right": "правий {key}",
         "model_failed": "Модель {model} не запустилася — повернув попередню",
         "menu_settings": "Налаштування…", "mic_default": "Як у системі", "idle_never": "Ніколи",
+        "gb": "ГБ", "st_llm_download": "Завантажую модель виправлення… {pct}",
     },
     "de": {
         "mic_title": "Mikrofon nicht verfügbar",
@@ -146,6 +149,7 @@ WIN_STRINGS = {
         "key_right": "{key} rechts",
         "model_failed": "Modell {model} ist nicht gestartet — zurück zum vorherigen",
         "menu_settings": "Einstellungen…", "mic_default": "Wie im System", "idle_never": "Nie",
+        "gb": "GB", "st_llm_download": "Lade Korrekturmodell… {pct}",
     },
 }
 

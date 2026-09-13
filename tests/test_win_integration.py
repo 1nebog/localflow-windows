@@ -340,3 +340,61 @@ def test_panel_window_opens_and_closes(tmp_path):
     finally:
         win.close()
         srv.stop()
+
+
+def test_media_pause_with_real_player(tmp_path):
+    """Настоящий плеер Windows в этом процессе появляется в системном пульте
+    медиа — пауза должна его остановить и включить обратно."""
+    import asyncio
+    import wave
+
+    import numpy as np
+    from winrt.windows.foundation import Uri
+    from winrt.windows.media.core import MediaSource
+    from winrt.windows.media.playback import MediaPlayer
+
+    from localflow.win.media import PAUSED, PLAYING, MediaPause, _request_manager
+
+    path = tmp_path / "tone.wav"
+    t = np.arange(16000 * 30) / 16000
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes((np.sin(2 * np.pi * 440 * t) * 3000).astype(np.int16).tobytes())
+    player = MediaPlayer()
+    player.source = MediaSource.create_from_uri(Uri(path.as_uri()))
+    player.volume = 0.05
+    player.play()
+
+    def statuses():
+        async def run():
+            manager = await _request_manager()
+            return [s.get_playback_info().playback_status for s in manager.get_sessions()]
+        return asyncio.run(run())
+
+    try:
+        for _ in range(40):
+            if PLAYING in statuses():
+                break
+            time.sleep(0.25)
+        else:
+            pytest.skip(f"плеер не заиграл на этой машине (нет звука?): {statuses()}")
+        m = MediaPause()
+        m.pause()
+        m.wait()
+        for _ in range(20):
+            if PLAYING not in statuses():
+                break
+            time.sleep(0.1)
+        assert PAUSED in statuses() and PLAYING not in statuses()
+        m.resume()
+        m.wait()
+        for _ in range(20):
+            if PLAYING in statuses():
+                break
+            time.sleep(0.1)
+        assert PLAYING in statuses()
+    finally:
+        player.pause()
+        player.close()

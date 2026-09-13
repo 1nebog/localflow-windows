@@ -20,9 +20,10 @@ from .audio import AudioRecorder
 from .autotune import START_MODEL, AutoTune
 from .core import tr
 from .dictation import Dictation
-from .engine.catalog import WHISPER_SERVER_EXE
+from .engine.catalog import LLAMA_SERVER_EXE, WHISPER_SERVER_EXE
 from .keys import KeyboardLogic, chord_from_config, chord_label, normalize
 from .paths import APP_DIR, DATA_DIR, ENGINES_DIR, FROZEN, LOG_DIR, MODELS_DIR
+from .polisher import TextPolisher
 from .transcriber import Transcriber
 
 log = logging.getLogger("localflow")
@@ -75,6 +76,16 @@ def engine_exe() -> Path:
     return ENGINES_DIR / "whisper" / WHISPER_SERVER_EXE
 
 
+def llama_exe() -> Path:
+    env = os.environ.get("LOCALFLOW_LLAMA_EXE")
+    if env:
+        return Path(env)
+    bundled = APP_DIR / "engine" / "llama" / LLAMA_SERVER_EXE
+    if FROZEN or bundled.exists():
+        return bundled
+    return ENGINES_DIR / "llama" / LLAMA_SERVER_EXE
+
+
 def send_command(name: str, wait_exit: float = 0.0) -> bool:
     """Команда уже запущенной копии (второй запуск, установщик).
     False — запущенной копии нет."""
@@ -100,7 +111,7 @@ def send_command(name: str, wait_exit: float = 0.0) -> bool:
 
 class App:
     def __init__(self):
-        from .win import keyhook, paste, system
+        from .win import keyhook, media, paste, system
 
         strings.install()
         self.cfg = core.load_config()
@@ -115,6 +126,13 @@ class App:
                                      else core.DEFAULT_LANGUAGE)
         self.transcriber.use_gpu = bool(self.cfg.get("use_gpu", True))
         self.transcriber.on_gpu_disabled = self._gpu_disabled
+
+        self.polisher = TextPolisher(llama_exe(), MODELS_DIR, LOG_DIR)
+        self.polisher.mode = (self.cfg.get("llm_mode") if self.cfg.get("llm_mode") in core.LLM_MODES
+                              else core.DEFAULT_LLM_MODE)
+        self.polisher.on_gpu_disabled = lambda: self._set("llm_gpu", False)
+        self.media = media.MediaPause()
+        self.media.enabled = bool(self.cfg.get("pause_media", True))
 
         self.recorder = AudioRecorder()
         self.recorder.device = self.cfg.get("mic_device") or None
@@ -133,13 +151,15 @@ class App:
             paste=self.paster, sounds=self.sounds,
             frontmost_app=system.frontmost_app_name,
             window_title=system.frontmost_window_title,
-            notify=self.notify, autodict=autodict, history=history)
+            notify=self.notify, autodict=autodict, history=history,
+            polisher=self.polisher, media=self.media)
         d = self.dictation
         d.paste_method = self.cfg.get("paste_method") if self.cfg.get("paste_method") in ("type", "clipboard") else "clipboard"
         d.style = self.cfg.get("style") if self.cfg.get("style") in core.STYLES else core.DEFAULT_STYLE
         d.translate_to = (self.cfg.get("translate_to") if self.cfg.get("translate_to") in core.TRANSLATE_TARGETS
                           else core.DEFAULT_TRANSLATE_TO)
         d.voice_structure = bool(self.cfg.get("voice_structure", True))
+        d.voice_edit = bool(self.cfg.get("voice_edit", True))
         d.app_profiles = self.cfg.get("app_profiles", {})
         d.idle_unload_min = (self.cfg.get("idle_unload_min") if self.cfg.get("idle_unload_min") in core.IDLE_UNLOAD_OPTIONS
                              else core.DEFAULT_IDLE_UNLOAD_MIN)
@@ -202,6 +222,9 @@ class App:
                 core.save_config(self.cfg)
                 self.notify(tr("ready_title"),
                             tr("ready_msg").format(key=menu.pretty_key(self.keys.hotkey)))
+            if self.polisher.enabled:
+                # после Whisper: вдвоём при запуске они толкались бы за диск и память
+                self._start_polisher(self.polisher.mode)
             threading.Thread(target=self.dictation.recover_lost_dictation,
                              daemon=True, name="recovery").start()
             self.autotune.after_load()
@@ -239,6 +262,26 @@ class App:
             # как на Mac: коротко показать, что режим включился
             self.pill.show_text(f"{tr('translating')} → {code.upper()}", glow="blue")
             self.pill.hide(after=2.0)
+
+    def set_llm_mode(self, mode: str) -> None:
+        p = self.polisher
+        if mode not in core.LLM_MODES:
+            return
+        if mode == p.mode and (mode == "off" or p.ready or p.is_loading):
+            return        # уже работает; иначе — повторный выбор пробует снова
+        self._set("llm_mode", mode)
+        if mode == "off":
+            self.polisher.set_mode("off")
+            return
+        self.notify(tr("llm"), tr("llm_loading"))
+        self._start_polisher(mode, on_done=lambda ok: self.notify(
+            tr("llm"), tr("llm_ready") if ok else tr("llm_failed")))
+
+    def _start_polisher(self, mode: str, on_done=None) -> None:
+        # Видеокарта — как решил замер распознавания: встроенная графика,
+        # которая медленнее процессора там, медленнее и здесь
+        self.polisher.use_gpu = bool(self.cfg.get("llm_gpu", self.cfg.get("use_gpu", True)))
+        self.polisher.set_mode(mode, on_done=on_done)
 
     def set_paste(self, method: str) -> None:
         self.dictation.paste_method = method
@@ -328,6 +371,10 @@ class App:
         self.sounds.enabled = bool(on)
         self._set("sounds", bool(on))
 
+    def set_media_pause(self, on: bool) -> None:
+        self.media.enabled = bool(on)
+        self._set("pause_media", bool(on))
+
     def set_idle_unload(self, minutes: int) -> None:
         self.dictation.idle_unload_min = minutes
         self._set("idle_unload_min", minutes)
@@ -389,6 +436,9 @@ class App:
         except Exception as exc:
             log.warning("Окна не закрылись: %s", exc)
         self.hook.stop()
+        self.media.resume()
+        self.media.wait(1.0)         # музыку, поставленную на паузу, вернуть до выхода
+        self.polisher.unload()
         self.transcriber.unload()
 
     def run(self) -> None:
@@ -409,6 +459,7 @@ class App:
             self.hook_error = self.hook.error
             self.notify(tr("error_title"), tr("st_hook_error"))
         threading.Thread(target=self.recorder.warm_up, daemon=True, name="mic-warmup").start()
+        self.media.warm_up()
         threading.Thread(target=self._load_model, daemon=True, name="model-loader").start()
         threading.Thread(target=self._idle_loop, daemon=True, name="idle").start()
         self.pill.prewarm()

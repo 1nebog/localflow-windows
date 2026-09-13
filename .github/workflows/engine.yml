@@ -5,6 +5,9 @@
 #     лучший, который поддерживает процессор);
 #   - модуль для видеокарт через Vulkan: NVIDIA, AMD, Intel, включая
 #     встроенную графику. Нет видеокарты или драйвера — считает процессор.
+#
+# Движок умного исправления (llama.cpp) не собираем: у проекта есть готовая
+# официальная сборка с Vulkan. Берём её по номеру и сверяем контрольную сумму.
 name: Engine
 
 on:
@@ -45,6 +48,8 @@ env:
   WHISPER_REF: b5130
   VULKAN_VERSION: 1.4.357.0
   ENGINE_REV: "2"   # поменять, чтобы пересобрать без смены версии
+  LLAMA_REF: b10933
+  LLAMA_SHA256: 82a5ddc27fbb39bb8bc2cb133ec0bc6863599974cdc35b1749f6cb34654e1a0d
 
 jobs:
   build-whisper:
@@ -130,6 +135,78 @@ jobs:
           name: whisper-engine-win-x64
           path: whisper-engine
 
+  llama-engine:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Готовая сборка llama.cpp
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\llama.zip"
+          curl.exe -sSfLo $zip "https://github.com/ggml-org/llama.cpp/releases/download/$env:LLAMA_REF/llama-$env:LLAMA_REF-bin-win-vulkan-x64.zip"
+          $sum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($sum -ne $env:LLAMA_SHA256) { Write-Host "Сумма не совпала: $sum"; exit 1 }
+          Expand-Archive $zip "$env:RUNNER_TEMP\llama"
+          New-Item -ItemType Directory -Force llama-engine | Out-Null
+          # только сервер и его библиотеки: остальные утилиты программе не нужны
+          $src = "$env:RUNNER_TEMP\llama"
+          Copy-Item "$src\llama-server.exe", "$src\llama-server-impl.dll", "$src\llama-common.dll", `
+                    "$src\llama.dll", "$src\mtmd.dll", "$src\ggml.dll", "$src\ggml-base.dll", `
+                    "$src\ggml-vulkan.dll", "$src\ggml-cpu-*.dll", "$src\libomp.dll", `
+                    "$src\LICENSE-LLVM-OpenMP" llama-engine\
+          # Библиотеки Visual C++ кладём рядом: на чистой Windows их может не быть
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $crt = & $vswhere -latest -products * -find "VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT" |
+                 Where-Object { $_ -notmatch "onecore|debug" } | Select-Object -Last 1
+          Copy-Item "$crt\*.dll" llama-engine\
+          curl.exe -sSfLo llama-engine\LICENSE-llama.cpp.txt "https://raw.githubusercontent.com/ggml-org/llama.cpp/$env:LLAMA_REF/LICENSE"
+          "llama.cpp $env:LLAMA_REF (win-vulkan-x64), sha256 $env:LLAMA_SHA256" | Out-File llama-engine\VERSION.txt
+          .\llama-engine\llama-server.exe --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem llama-engine | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llama-engine-win-x64
+          path: llama-engine
+
+  test-llm:
+    needs: llama-engine
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: llama-engine-win-x64
+          path: llama-engine
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Установка
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Модель исправления из кэша
+        uses: actions/cache@v4
+        with:
+          path: llm-models
+          key: llm-fast-v1
+
+      - name: Скачивание модели исправления (код программы)
+        run: python tools/fetch_models.py llm-fast --dest llm-models
+
+      - name: Умное исправление настоящей моделью
+        env:
+          LOCALFLOW_LLAMA_EXE: ${{ github.workspace }}\llama-engine\llama-server.exe
+          LOCALFLOW_TEST_MODELS: ${{ github.workspace }}\llm-models
+          LOCALFLOW_TEST_LLM: fast
+        run: python -m pytest -s -v tests/test_llm_real.py
+
   test-engine:
     needs: build-whisper
     runs-on: windows-latest
@@ -179,7 +256,7 @@ jobs:
         run: python -m pytest -s -v tests/test_engine_real.py tests/test_e2e_windows.py
 
   installer:
-    needs: build-whisper
+    needs: [build-whisper, llama-engine]
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -189,6 +266,11 @@ jobs:
         with:
           name: whisper-engine-win-x64
           path: engine-bin
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: llama-engine-win-x64
+          path: engine-bin/llama
 
       - uses: actions/setup-python@v5
         with:
@@ -245,7 +327,7 @@ jobs:
           retention-days: 14
 
   publish-app:
-    needs: [installer, test-engine]
+    needs: [installer, test-engine, test-llm]
     if: github.event_name == 'workflow_dispatch' && inputs.publish_app
     runs-on: ubuntu-latest
     permissions:

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from localflow import core, menu, strings
-from localflow.engine.catalog import WHISPER_MODELS
+from localflow.engine.catalog import LLM_MODELS, WHISPER_MODELS
 from localflow.keys import VK_RCONTROL
 
 strings.install()
@@ -33,7 +33,9 @@ def make_app(tmp_path, **kw):
         set_style=calls.set_style, set_translate=calls.set_translate,
         set_paste=calls.set_paste, set_ui_lang=calls.set_ui_lang,
         paste_from_history=calls.paste, toggle_pause=calls.pause, quit=calls.quit,
-        open_panel=calls.open_panel,
+        open_panel=calls.open_panel, set_llm_mode=calls.set_llm_mode,
+        polisher=SimpleNamespace(mode="off", enabled=False, progress=None, is_loading=False,
+                                 downloaded=lambda mode: mode == "fast"),
     )
     for k, v in kw.items():
         setattr(app, k, v)
@@ -119,7 +121,12 @@ def test_menu_layout_and_actions(tmp_path):
     langs = find(items, "Язык").children
     assert langs[0].label == "Определять сам" and langs[0].checked
     find(langs, "Английский").action()
+    llm = find(items, "Умное исправление").children
+    assert [i.label for i in llm] == ["Выключено", "Быстро", "Точно (тяжелее) · 5 ГБ"]
+    assert llm[0].checked
+    llm[2].action()
     find(find(items, "Стиль текста").children, "Чат").action()
+    assert not find(items, "Диктовка с переводом").enabled    # переводит модель исправления
     tr_items = find(items, "Диктовка с переводом").children
     assert tr_items[0].checked and tr_items[0].label == "Выключено"
     find(tr_items, "Немецкий").action()
@@ -128,7 +135,7 @@ def test_menu_layout_and_actions(tmp_path):
     find(items, "Пауза").action()
     find(items, "Выход").action()
     assert calls == [("open_panel",), ("choose_model", "tiny"), ("choose_model", None),
-                     ("set_language", "en"), ("set_style", "chat"),
+                     ("set_language", "en"), ("set_llm_mode", "quality"), ("set_style", "chat"),
                      ("set_translate", "de"), ("set_paste", "type"),
                      ("set_ui_lang", "en"), ("pause",), ("quit",)]
 
@@ -160,3 +167,22 @@ def test_menu_follows_interface_language(tmp_path):
     labels = [i.label for i in menu.build(app) if i]
     assert "Quit" in labels and "Pause" in labels
     assert labels[0] == "Ready — hold Right Ctrl and speak"
+
+
+def test_smart_correction_status(tmp_path):
+    app, _ = make_app(tmp_path)
+    app.polisher.mode, app.polisher.enabled = "quality", True
+    app.polisher.progress = (LLM_MODELS["quality"].size // 4, LLM_MODELS["quality"].size)
+    assert menu.status_text(app) == "Скачиваю модель исправления… 25%"
+    assert menu.tray_state(app) == "idle"          # диктовка при этом работает
+    app.polisher.progress, app.polisher.is_loading = None, True
+    assert menu.status_text(app) == "Гружу модель исправления…"
+    app.polisher.is_loading = False
+    assert menu.status_text(app).startswith("Готово")
+    assert find(menu.build(app), "Диктовка с переводом").enabled
+
+
+def test_gigabytes_follow_language():
+    assert menu.gb(2_497_281_120) == "2,5 ГБ" and menu.gb(5_027_783_488) == "5 ГБ"
+    core._UI_LANG = "en"
+    assert menu.gb(2_497_281_120) == "2.5 GB"

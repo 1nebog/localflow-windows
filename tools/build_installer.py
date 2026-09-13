@@ -2,7 +2,8 @@
 
     python tools/build_installer.py --engine engine-bin
 
-Результат: build/LocalFlow-Setup-<версия>.exe. Запускается в GitHub Actions
+В engine-bin — сборка whisper.cpp, в engine-bin/llama — llama.cpp (умное
+исправление). Результат: build/LocalFlow-Setup-<версия>.exe. Запускается в GitHub Actions
 на Windows; нужны pyinstaller и Inno Setup 6.
 """
 
@@ -55,11 +56,12 @@ def iscc() -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", required=True, help="папка со сборкой whisper.cpp")
+    ap.add_argument("--engine", required=True, help="папка со сборкой whisper.cpp и llama/")
     args = ap.parse_args()
     engine = Path(args.engine).resolve()
-    if not (engine / "whisper-server.exe").exists():
-        sys.exit(f"В {engine} нет whisper-server.exe")
+    for exe in ("whisper-server.exe", r"llama\llama-server.exe"):
+        if not (engine / exe).exists():
+            sys.exit(f"В {engine} нет {exe}")
 
     BUILD.mkdir(exist_ok=True)
     ico = BUILD / "LocalFlow.ico"
@@ -74,6 +76,8 @@ def main() -> None:
         "--distpath", str(BUILD / "dist"), "--workpath", str(BUILD / "pyi"),
         "--specpath", str(BUILD),
         "--paths", str(ROOT),
+        # пульт медиа Windows: модули подгружаются на лету, сам сборщик их не видит
+        "--collect-all", "winrt",
         # в программе не нужны — только место занимают
         "--exclude-module", "tkinter", "--exclude-module", "pytest",
         "--exclude-module", "unittest", "--exclude-module", "pydoc",

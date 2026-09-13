@@ -1,8 +1,8 @@
 """Какие модели есть и откуда их качать.
 
-Ключи моделей те же, что у версии для Mac (`core.MODELS`), чтобы настройки
-и тексты меню совпадали. Файлы — сжатые модели whisper.cpp: они в 3–5 раз
-меньше исходных, а качество на диктовке почти не страдает.
+Ключи моделей те же, что у версии для Mac (`core.MODELS`, `core.LLM_MODES`),
+чтобы настройки и тексты меню совпадали. Файлы — сжатые модели: они в 3–5
+раз меньше исходных, а качество на диктовке почти не страдает.
 """
 
 from dataclasses import dataclass
@@ -15,10 +15,11 @@ class ModelFile:
     file: str
     size: int      # байт, для проверки и полоски прогресса
     sha256: str
+    base: str = HF_WHISPER
 
     @property
     def url(self) -> str:
-        return HF_WHISPER + self.file
+        return self.base + self.file
 
     @property
     def size_mb(self) -> int:
@@ -46,3 +47,23 @@ WHISPER_MODELS = {
 # Сборка движка распознавания, которую ставит установщик и проверяют тесты
 WHISPER_ENGINE_REF = "b5130"
 WHISPER_SERVER_EXE = "whisper-server.exe"
+
+# Модели умного исправления — те же, что на Mac (Qwen3 4B и 8B), в формате
+# llama.cpp. Ссылки закреплены за версией репозитория: файл не подменится
+# молча, а сумма всё равно сверяется после скачивания.
+LLM_MODELS = {
+    "fast": ModelFile(
+        "Qwen3-4B-Instruct-2507-Q4_K_M.gguf", 2_497_281_120,
+        "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+        "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/"
+        "a06e946bb6b655725eafa393f4a9745d460374c9/"),
+    "quality": ModelFile(
+        "Qwen3-8B-Q4_K_M.gguf", 5_027_783_488,
+        "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+        "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/"
+        "7c41481f57cb95916b40956ab2f0b139b296d974/"),
+}
+
+# Готовая сборка llama.cpp с Vulkan, которую кладёт в установщик сборка
+LLAMA_ENGINE_REF = "b10933"
+LLAMA_SERVER_EXE = "llama-server.exe"

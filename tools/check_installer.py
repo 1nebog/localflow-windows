@@ -85,9 +85,15 @@ def main() -> None:
     subprocess.run([str(setup), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
                     "/TASKS=autostart", f"/LOG={setup.parent / 'install.log'}"], check=True)
     print(f"за {time.monotonic() - t0:.1f} c")
-    for path in (EXE, APP_DIR / "engine" / "whisper-server.exe", APP_DIR / "unins000.exe"):
+    llama = APP_DIR / "engine" / "llama" / "llama-server.exe"
+    for path in (EXE, APP_DIR / "engine" / "whisper-server.exe", llama, APP_DIR / "unins000.exe"):
         if not path.exists():
             fail(f"нет файла {path}")
+    # движок исправления запускается на чистой Windows: все библиотеки на месте
+    out = subprocess.run([str(llama), "--version"], capture_output=True, text=True, timeout=60)
+    if out.returncode != 0:
+        fail(f"llama-server --version: код {out.returncode}\n{out.stdout}{out.stderr}")
+    print("движок исправления:", (out.stdout + out.stderr).strip().splitlines()[-1:])
     size = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file())
     print(f"Папка программы: {size / 1e6:.0f} МБ")
     if run_value() != f'"{EXE}"':
@@ -104,6 +110,8 @@ def main() -> None:
     print(f"клавиша: {wait_log('Перехват клавиатуры включён', 60):.1f} c")
     print(f"модель готова: {wait_log('Готово: зажми', 240):.1f} c от запуска")
     wait_log("Панель: открываю окно", 30)            # первый запуск показывает панель
+    wait_log("Пауза музыки", 30)                     # пульт медиа: собран в программу
+    print("пауза музыки:", [l for l in log_text().splitlines() if "Пауза музыки" in l][:1])
     if not running("whisper-server.exe"):
         fail("движок не запущен")
     if proc.poll() is not None:
@@ -125,7 +133,7 @@ def main() -> None:
     time.sleep(2)
     if running("whisper-server.exe"):
         fail("движок остался висеть после выхода")
-    if "Traceback" in log_text():
+    if "Traceback" in log_text() or "No module named" in log_text():
         fail("в журнале есть ошибки Python")
 
     step("Обновление поверх запущенной программы")

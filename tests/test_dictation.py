@@ -325,3 +325,164 @@ def test_idle_unload(d, monkeypatch):
     assert not d.maybe_unload_idle()
     d._last_use_t -= 61
     assert d.maybe_unload_idle() and not d.transcriber.is_ready
+
+
+# --- Умное исправление, перевод, правка голосом, пауза музыки ------------------
+
+class FakePolisher:
+    def __init__(self):
+        self.mode = "fast"
+        self.ready = True
+        self.is_loading = False
+        self.calls = []
+        self.ok = True
+
+    @property
+    def enabled(self):
+        return self.mode != "off"
+
+    def set_mode(self, mode, on_done=None):
+        self.calls.append(("set_mode", mode))
+
+    def polish(self, text, lang="ru", ctx=None):
+        self.calls.append(("polish", text))
+        return text.replace("короче ", "").capitalize()
+
+    def translate(self, text, target, ctx=None):
+        self.calls.append(("translate", target, text))
+        return ("Hello, world." if self.ok else text), self.ok
+
+    def rewrite(self, text, instruction, bounds=(0.3, 2.5), ctx=None):
+        self.calls.append(("rewrite", text))
+        return ("Коротко." if self.ok else text), self.ok
+
+    def unload(self):
+        self.ready = False
+
+
+class FakeMedia:
+    def __init__(self):
+        self.events = []
+
+    def pause(self):
+        self.events.append("pause")
+
+    def resume(self):
+        self.events.append("resume")
+
+
+@pytest.fixture
+def dp(d):
+    d.polisher = FakePolisher()
+    d.media = FakeMedia()
+    return d
+
+
+def test_polish_before_style_and_raw_kept_in_history(dp):
+    dp.transcriber.text = "короче привет мир"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.paste.pasted[0][0] == "Привет мир"
+    assert dp.history[0] == {**dp.history[0], "text": "Привет мир", "raw": "короче привет мир"}
+
+
+def test_snippets_are_not_polished(dp):
+    dp.transcriber.last_verbatim = True
+    dp.transcriber.text = "моя почта"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.paste.pasted[0][0] == "моя почта" and dp.polisher.calls == []
+
+
+def test_polisher_off_does_nothing(dp):
+    dp.polisher.mode = "off"
+    dp.translate_to = "en"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.paste.pasted[0][0] == "Привет, мир." and dp.polisher.calls == []
+
+
+def test_translate_mode_and_failed_translation_is_polished(dp):
+    dp.translate_to = "en"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.paste.pasted[0][0] == "Hello, world."
+    dp.polisher.ok = False
+    hold(dp)
+    assert wait(lambda: len(dp.paste.pasted) == 2)
+    assert [c[0] for c in dp.polisher.calls[-2:]] == ["translate", "polish"]
+
+
+def test_voice_command_translates_one_phrase(dp):
+    dp.transcriber.text = "По-английски, привет мир"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.polisher.calls[0] == ("translate", "en", "привет мир")
+
+
+def test_voice_edit_rewrites_last_paste(dp):
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted) and wait(lambda: not dp._busy)
+    dp.transcriber.text = "Покороче"
+    hold(dp)
+    assert wait(lambda: len(dp.paste.pasted) == 2) and wait(lambda: not dp._busy)
+    assert dp.paste.undos == 1 and dp.paste.pasted[1][0] == "Коротко."
+    assert dp.history[0]["text"] == "Коротко." and dp.history[0]["raw"] == "Привет, мир."
+
+
+def test_voice_edit_failure_leaves_text(dp):
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted) and wait(lambda: not dp._busy)
+    dp.polisher.ok = False
+    dp.transcriber.text = "Покороче"
+    hold(dp)
+    assert wait(lambda: not dp._busy and dp.transcriber.calls == 2)
+    assert dp.paste.undos == 0 and len(dp.paste.pasted) == 1
+
+
+def test_voice_edit_only_right_after_paste(dp, monkeypatch):
+    monkeypatch.setattr(Dictation, "VOICE_EDIT_WINDOW", 0.0)
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted) and wait(lambda: not dp._busy)
+    dp.transcriber.text = "Покороче"
+    hold(dp)
+    assert wait(lambda: len(dp.paste.pasted) == 2)
+    assert dp.paste.undos == 0                # обычная диктовка слова «покороче»
+
+
+def test_waits_for_waking_polisher(dp):
+    dp.polisher.ready, dp.polisher.is_loading = False, True
+
+    def wake():
+        time.sleep(0.3)
+        dp.polisher.ready, dp.polisher.is_loading = True, False
+    threading.Thread(target=wake, daemon=True).start()
+    dp.transcriber.text = "короче привет"
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.paste.pasted[0][0] == "Привет"
+
+
+def test_recording_wakes_sleeping_polisher(dp):
+    dp.polisher.ready = False
+    hold(dp)
+    assert ("set_mode", "fast") in dp.polisher.calls
+
+
+def test_idle_unload_frees_both_models(dp):
+    dp.idle_unload_min = 1
+    dp._last_use_t -= 61
+    assert dp.maybe_unload_idle()
+    assert not dp.polisher.ready and not dp.transcriber.is_ready
+
+
+def test_music_paused_for_recording(dp):
+    hold(dp)
+    assert wait(lambda: dp.paste.pasted)
+    assert dp.media.events == ["pause", "resume"]
+    dp.on_key_event(HOTKEY_DOWN)
+    dp.on_key_event(ESCAPE)
+    assert dp.media.events[-2:] == ["pause", "resume"]
+    dp.recorder.fail = True
+    dp.on_key_event(HOTKEY_DOWN)
+    assert dp.media.events[-2:] == ["pause", "resume"]
