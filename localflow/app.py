@@ -1,9 +1,9 @@
-"""Запуск LocalFlow: настройки, движок, модель, клавиша, запись.
-
-Пока без значка в трее и таблетки — они следующим этапом. Сейчас программа
-запускается из консоли и пишет, что делает, в журнал:
+"""Запуск LocalFlow: настройки, движок, модель, клавиша, запись, трей, таблетка.
 
     python -m localflow
+
+Главный поток — поток окон (значок, меню, таблетка). Модель грузится, клавиша
+перехватывается и речь распознаётся в своих потоках.
 """
 
 import ctypes
@@ -15,9 +15,10 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import __version__, core, strings
+from . import __version__, core, menu, strings
 from .audio import AudioRecorder
-from .autotune import AutoTune
+from .autotune import START_MODEL, AutoTune
+from .core import tr
 from .dictation import Dictation
 from .engine.catalog import WHISPER_SERVER_EXE
 from .keys import KeyboardLogic, chord_from_config, chord_label
@@ -25,6 +26,8 @@ from .paths import DATA_DIR, ENGINES_DIR, LOG_DIR, MODELS_DIR
 from .transcriber import Transcriber
 
 log = logging.getLogger("localflow")
+
+TRAY_REFRESH_SEC = 0.3
 
 
 def setup_logging(console: bool) -> None:
@@ -88,16 +91,17 @@ class App:
                                   is_down=keyhook.is_key_down)
         self.sounds = system.Sounds(DATA_DIR / "sounds")
         self.sounds.enabled = bool(self.cfg.get("sounds", True))
+        self.paster = paste.Paster()
 
         autodict = core.AutoDictionary()
         history = core.load_history()
         autodict.bind(lambda: history)
         self.dictation = Dictation(
             self.transcriber, self.recorder, self.keys,
-            paste=paste.Paster(), sounds=self.sounds,
+            paste=self.paster, sounds=self.sounds,
             frontmost_app=system.frontmost_app_name,
             window_title=system.frontmost_window_title,
-            autodict=autodict, history=history)
+            notify=self.notify, autodict=autodict, history=history)
         d = self.dictation
         d.paste_method = self.cfg.get("paste_method") if self.cfg.get("paste_method") in ("type", "clipboard") else "clipboard"
         d.style = self.cfg.get("style") if self.cfg.get("style") in core.STYLES else core.DEFAULT_STYLE
@@ -110,22 +114,57 @@ class App:
 
         self.autotune = AutoTune(self.transcriber, self.cfg, core.save_config,
                                  is_idle=lambda: not (d._busy or self.recorder.is_recording))
+        self.autotune.on_error = lambda name: self.notify(
+            tr("error_title"), tr("model_failed").format(model=core.MODEL_LABELS.get(name, name)))
         self.hook = keyhook.KeyHook(self.keys, d.on_key_event)
+
+        self.paused = False
+        self.started = False          # модель хоть раз запустилась
+        self.download = None          # (модель, скачано, всего) при первом запуске
+        self.hook_error = None
+        self.ui = None
+        self.tray = None
+        self.pill = None
+        self._shut = False
+
+    # --- Уведомления и значок ------------------------------------------------
+
+    def notify(self, title: str, message: str) -> None:
+        if self.ui is None or self.tray is None:
+            log.info("%s: %s", title, message)
+            return
+        self.ui.post(lambda: self.tray.notify(title, message))
+
+    def _refresh_tray(self) -> None:
+        self.tray.update(menu.tray_state(self), menu.tooltip(self))
+
+    # --- Модель ----------------------------------------------------------------
 
     def _gpu_disabled(self) -> None:
         self.cfg["use_gpu"] = False
         core.save_config(self.cfg)
 
     def _load_model(self) -> None:
+        def progress(have, total):
+            self.download = (START_MODEL, have, total)
+
         try:
-            name = self.autotune.ensure_start_model()
+            name = self.autotune.ensure_start_model(progress=progress)
         except Exception as exc:
             log.error("Модель не скачалась: %s", exc)
             self.transcriber.load_error = str(exc)
             return
+        finally:
+            self.download = None
         self.transcriber.model_name = name
         if self.transcriber.load(name):
+            self.started = True
             log.info("Готово: зажми %s и говори", chord_label(self.keys.hotkey))
+            if not self.cfg.get("welcomed"):
+                self.cfg["welcomed"] = True
+                core.save_config(self.cfg)
+                self.notify(tr("ready_title"),
+                            tr("ready_msg").format(key=menu.pretty_key(self.keys.hotkey)))
             threading.Thread(target=self.dictation.recover_lost_dictation,
                              daemon=True, name="recovery").start()
             self.autotune.after_load()
@@ -138,21 +177,108 @@ class App:
             except Exception as exc:
                 log.error("Проверка простоя упала: %s", exc)
 
+    # --- Пункты меню -----------------------------------------------------------
+
+    def _set(self, key: str, value) -> None:
+        self.cfg[key] = value
+        core.save_config(self.cfg)
+        log.info("Настройка %s = %r", key, value)
+
+    def choose_model(self, name: str | None) -> None:
+        self.autotune.choose(name)
+
+    def set_language(self, code: str) -> None:
+        self.transcriber.language = code
+        self._set("language", code)
+
+    def set_style(self, key: str) -> None:
+        self.dictation.style = key
+        self._set("style", key)
+
+    def set_translate(self, code: str) -> None:
+        self.dictation.translate_to = code
+        self._set("translate_to", code)
+        if code != "off" and self.pill is not None:
+            # как на Mac: коротко показать, что режим включился
+            self.pill.show_text(f"{tr('translating')} → {code.upper()}", glow="blue")
+            self.pill.hide(after=2.0)
+
+    def set_paste(self, method: str) -> None:
+        self.dictation.paste_method = method
+        self._set("paste_method", method)
+
+    def set_ui_lang(self, code: str) -> None:
+        core._UI_LANG = code
+        self._set("ui_lang", code)
+        if self.tray is not None:
+            self._refresh_tray()
+
+    def toggle_pause(self) -> None:
+        self.paused = not self.paused
+        self.hook.paused = self.paused
+        if self.paused:
+            self.dictation._cancel_recording("пауза", quiet=True)
+            self.keys.enter_armed = False
+        else:
+            self.keys.set_hotkey(self.keys.hotkey)   # забыть зажатое до паузы
+        log.info("Пауза %s", "включена" if self.paused else "выключена")
+
+    def paste_from_history(self, text: str) -> None:
+        # фокус уже вернулся в прежнее окно; даём ему секунду прийти в себя
+        method = self.dictation.paste_method
+        t = threading.Timer(0.35, lambda: self.paster.paste_text(text, method))
+        t.daemon = True
+        t.start()
+
+    def quit(self) -> None:
+        log.info("Выход")
+        if self.ui is not None:
+            self.ui.quit()
+
+    # --- Жизненный цикл --------------------------------------------------------
+
+    def _shutdown(self) -> None:
+        if self._shut:
+            return
+        self._shut = True
+        try:
+            if self.tray is not None:
+                self.tray.remove()
+            if self.pill is not None:
+                self.pill.destroy()
+        except Exception as exc:
+            log.warning("Окна не закрылись: %s", exc)
+        self.hook.stop()
+        self.transcriber.unload()
+
     def run(self) -> None:
+        from .win import overlay, tray, ui, w32
+
         log.info("LocalFlow %s для Windows запускается", __version__)
+        self.ui = ui.UiLoop()
+        self.pill = overlay.PillWindow(self.ui, self.cfg.get("pill_animation"))
+        self.dictation.indicator = self.pill
+        self.tray = tray.Tray(self.ui, lambda: menu.build(self))
+        self.tray.add(menu.tray_state(self), menu.tooltip(self))
+        self.ui.every(TRAY_REFRESH_SEC, self._refresh_tray)
+        self.ui.on(w32.WM_ENDSESSION, lambda wp, lp: self._shutdown() if wp else None)
+
         if not self.hook.start():
-            raise SystemExit(f"Перехват клавиатуры не включился: {self.hook.error}")
+            self.hook_error = self.hook.error
+            self.notify(tr("error_title"), tr("st_hook_error"))
         threading.Thread(target=self.recorder.warm_up, daemon=True, name="mic-warmup").start()
         threading.Thread(target=self._load_model, daemon=True, name="model-loader").start()
         threading.Thread(target=self._idle_loop, daemon=True, name="idle").start()
+        self.pill.prewarm()
+
+        # Ctrl+C в консоли: цикл окон спит в Windows и сам его не заметит
+        self._console_handler = w32.HANDLER_ROUTINE(lambda ev: bool(self.quit() or True))
+        w32.kernel32.SetConsoleCtrlHandler(self._console_handler, True)
         try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            log.info("Выход")
+            self.ui.run()
         finally:
-            self.hook.stop()
-            self.transcriber.unload()
+            w32.kernel32.SetConsoleCtrlHandler(self._console_handler, False)
+            self._shutdown()
 
 
 def main() -> None:
@@ -160,4 +286,6 @@ def main() -> None:
     if not single_instance():
         log.info("LocalFlow уже запущен")
         return
+    from .win import w32
+    w32.set_dpi_aware()
     App().run()

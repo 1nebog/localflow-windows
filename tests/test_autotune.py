@@ -99,3 +99,56 @@ def test_startup_model_prefers_choice_then_best_downloaded(tmp_path):
     assert at.startup_model() == "small"
     cfg["model"] = "base"
     assert at.startup_model() == "base"
+
+
+# --- Выбор модели в меню ------------------------------------------------------
+
+def test_menu_choice_downloads_loads_and_disables_auto(tmp_path):
+    SPEED.clear()
+    SPEED.update({("base", True): 0.2, ("medium", True): 1.5})
+    at, tr, cfg = make(tmp_path, cfg={"gpu_checked": True})
+    tr.is_ready = True
+    seen = []
+    at._download = lambda model, folder, progress=None: (
+        seen.append(progress is not None) or (progress(1, 2), fake_download(model, folder))[1])
+    at.choose("medium").join(5)
+    assert tr.model_name == "medium"
+    assert cfg["model"] == "medium" and cfg["model_auto"] is False
+    assert seen == [True] and at.progress is None and at.status == ""
+    at._tune()                                 # автоподбор ручной выбор не трогает
+    assert tr.model_name == "medium"
+
+
+def test_menu_choice_that_fails_goes_back(tmp_path):
+    SPEED.clear()
+    SPEED.update({("base", True): 0.2})
+
+    class Broken(FakeTr):
+        load_error = None
+        is_ready = True
+
+        def load(self, name=None):
+            if name == "small":
+                self.model_name, self.is_ready, self.load_error = name, False, "нет памяти"
+                return False
+            self.is_ready = True
+            return super().load(name)
+
+    fake_download(WHISPER_MODELS["base"], tmp_path)
+    tr = Broken(tmp_path)
+    cfg = {"gpu_checked": True}
+    at = AutoTune(tr, cfg, lambda c: None, downloader=fake_download)
+    tr.load("base")
+    failed = []
+    at.on_error = failed.append
+    at.choose("small").join(5)
+    assert failed == ["small"]
+    assert tr.model_name == "base" and tr.is_ready and cfg["model"] == "base"
+
+
+def test_menu_auto_turns_autotune_back_on(tmp_path):
+    SPEED.clear()
+    SPEED.update({("base", True): 0.15, ("large-v3-turbo", True): 1.2})
+    at, tr, cfg = make(tmp_path, cfg={"model_auto": False, "gpu_checked": True})
+    at.choose(None).join(5)
+    assert cfg["model_auto"] is True and tr.model_name == "large-v3-turbo"

@@ -69,6 +69,8 @@ class KeyHook:
         # Ctrl+V), не считаем — только живую клавиатуру. Для проверок можно
         # разрешить
         self.accept_injected = accept_injected
+        # Пауза из меню трея: все клавиши идут в приложения как обычно
+        self.paused = False
         self._events: queue.Queue = queue.Queue()
         self._thread_id = 0
         self._hook = None
@@ -107,7 +109,8 @@ class KeyHook:
 
     def _callback(self, code, wparam, lparam):
         try:
-            if code == 0 and wparam in (WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP):
+            if (code == 0 and not self.paused
+                    and wparam in (WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP)):
                 kb = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 injected = bool(kb.flags & LLKHF_INJECTED)
                 fake_altgr = kb.vkCode == VK_LCONTROL and kb.scanCode == ALTGR_FAKE_SCAN

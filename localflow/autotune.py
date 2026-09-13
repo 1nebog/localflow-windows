@@ -31,6 +31,8 @@ class AutoTune:
         self._download = downloader
         self._busy = threading.Lock()
         self.status = ""             # для настроек: что сейчас происходит
+        self.progress = None         # (модель, скачано, всего) пока качаем
+        self.on_error = None         # колбэк(модель): выбранная модель не запустилась
 
     @property
     def auto(self) -> bool:
@@ -131,7 +133,7 @@ class AutoTune:
                     self.cfg["models_too_slow"] = sorted(too_slow)
                 if not is_ready(WHISPER_MODELS[want], self.tr.models_dir):
                     self.status = f"download:{want}"
-                    self._download(WHISPER_MODELS[want], self.tr.models_dir)
+                    self._fetch(want)
                 self.status = f"switch:{want}"
                 if not self._load(want):
                     self._load(current)
@@ -141,3 +143,57 @@ class AutoTune:
         finally:
             self.status = ""
             self._busy.release()
+
+    def _fetch(self, name: str) -> None:
+        model = WHISPER_MODELS[name]
+        self.progress = (name, 0, model.size)
+        try:
+            self._download(model, self.tr.models_dir,
+                           progress=lambda have, total: setattr(self, "progress", (name, have, total)))
+        finally:
+            self.progress = None
+
+    # --- Выбор в меню ---------------------------------------------------------
+
+    def choose(self, name: str | None) -> threading.Thread:
+        """None — снова автоподбор; иначе эта модель, и автоподбор её не трогает."""
+        if name is None:
+            self.cfg["model_auto"] = True
+            self._save(self.cfg)
+            log.info("Модель: автоподбор")
+            return self._start(self._tune, "autotune")
+        self.cfg["model_auto"] = False
+        self.cfg["model"] = name
+        self._save(self.cfg)
+        log.info("Модель выбрана вручную: %s", name)
+        return self._start(lambda: self._switch(name), "model-switch")
+
+    @staticmethod
+    def _start(target, name) -> threading.Thread:
+        t = threading.Thread(target=target, daemon=True, name=name)
+        t.start()
+        return t
+
+    def _switch(self, name: str) -> None:
+        with self._busy:                  # дождаться автоподбора, если он идёт
+            previous = self.tr.model_name
+            try:
+                if not is_ready(WHISPER_MODELS[name], self.tr.models_dir):
+                    self.status = f"download:{name}"
+                    self._fetch(name)
+                if name == previous and self.tr.is_ready:
+                    return
+                self.status = f"switch:{name}"
+                if not self._load(name):
+                    raise RuntimeError(self.tr.load_error or "модель не запустилась")
+            except Exception as exc:
+                log.error("Модель %s не запустилась: %s", name, exc)
+                if previous and previous != name:
+                    self.cfg["model"] = previous
+                    self._save(self.cfg)
+                    if not self.tr.is_ready:
+                        self._load(previous)
+                if self.on_error:
+                    self.on_error(name)
+            finally:
+                self.status = ""
