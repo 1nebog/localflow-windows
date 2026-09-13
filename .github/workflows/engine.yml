@@ -11,8 +11,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "localflow/**"
-      - "tests/**"
+      - "localflow/engine/**"
+      - "localflow/transcriber.py"
+      - "localflow/audio_util.py"
+      - "tests/test_engine_real.py"
+      - "tests/fixtures/**"
       - "tools/fetch_models.py"
       - "engine/**"
       - ".github/workflows/engine.yml"
@@ -136,7 +139,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: requirements*.txt
 
       - name: Установка
         run: python -m pip install -r requirements-dev.txt

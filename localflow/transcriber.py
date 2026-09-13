@@ -71,6 +71,7 @@ class Transcriber:
         # скорости компьютера — по нему подбирается модель
         self.warmup_sec: float | None = None
         self.last_infer_sec: float | None = None   # последний запрос к движку
+        self.load_error: str | None = None   # почему модель не запустилась
 
     # --- Загрузка ------------------------------------------------------------
 
@@ -150,9 +151,11 @@ class Transcriber:
                 self._start_server()
             except Exception as exc:
                 log.error("Не удалось загрузить модель: %s", exc)
+                self.load_error = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
                 return False
             finally:
                 self._loading = False
+            self.load_error = None
             self._ready = True
             log.info("Модель '%s' загружена за %.1f c", self.model_name,
                      time.monotonic() - t0)
