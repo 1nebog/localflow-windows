@@ -3755,7 +3755,7 @@
   "args": [
    "Кнопку красной, вернее, синей сделай."
   ],
-  "ok": "Кнопку красной синей сделай."
+  "ok": "Кнопку синей сделай."
  },
  {
   "fn": "structure_by_voice",
@@ -11107,6 +11107,306 @@
    "відміна"
   ],
   "ok": "відміна"
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Кнопку красной, вернее, синей сделай."
+  ],
+  "ok": "Кнопку синей сделай."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Кнопку красной, вернее, синей сделай.",
+   "ru"
+  ],
+  "ok": "Кнопку красной, вернее, синей сделай."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Сделай кнопку красной, вернее, синей."
+  ],
+  "ok": "Сделай кнопку синей."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Сделай кнопку красной, вернее, синей.",
+   "ru"
+  ],
+  "ok": "Сделай кнопку красной, вернее, синей."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Сделай кнопку красной, вернее, синей сейчас же."
+  ],
+  "ok": "Сделай кнопку синей сейчас же."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Сделай кнопку красной, вернее, синей сейчас же.",
+   "ru"
+  ],
+  "ok": "Сделай кнопку красной, вернее, синей сейчас же."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Отправь Маше, я имею в виду Даше, файл."
+  ],
+  "ok": "Отправь Даше, файл."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Отправь Маше, я имею в виду Даше, файл.",
+   "ru"
+  ],
+  "ok": "Отправь Маше, я имею в виду Даше, файл."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Позвони Ивану, я имею в виду Петру, завтра."
+  ],
+  "ok": "Позвони Петру, завтра."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Позвони Ивану, я имею в виду Петру, завтра.",
+   "ru"
+  ],
+  "ok": "Позвони Ивану, я имею в виду Петру, завтра."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Встреча в среду, точнее, в четверг."
+  ],
+  "ok": "Встреча в четверг."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Встреча в среду, точнее, в четверг.",
+   "ru"
+  ],
+  "ok": "Встреча в среду, точнее, в четверг."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Приходи в пять, точнее, в шесть часов."
+  ],
+  "ok": "Приходи в шесть часов."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Приходи в пять, точнее, в шесть часов.",
+   "ru"
+  ],
+  "ok": "Приходи в пять, точнее, в шесть часов."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Купи два литра, вернее, три литра молока."
+  ],
+  "ok": "Купи три литра молока."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Купи два литра, вернее, три литра молока.",
+   "ru"
+  ],
+  "ok": "Купи два литра, вернее, три литра молока."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Купи 2 литра, вернее, 3 литра."
+  ],
+  "ok": "Купи 3 литра."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Купи 2 литра, вернее, 3 литра.",
+   "ru"
+  ],
+  "ok": "Купи 2 литра, вернее, 3 литра."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Красной, вернее, синей."
+  ],
+  "ok": "Синей."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Красной, вернее, синей.",
+   "ru"
+  ],
+  "ok": "Красной, вернее, синей."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Make the button red, I mean blue."
+  ],
+  "ok": "Make the button blue."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Make the button red, I mean blue.",
+   "ru"
+  ],
+  "ok": "Make the button red, I mean blue."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Meet on Monday, or rather on Tuesday."
+  ],
+  "ok": "Meet on Tuesday."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Meet on Monday, or rather on Tuesday.",
+   "ru"
+  ],
+  "ok": "Meet on Monday, or rather on Tuesday."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Send it to John, I mean Mike, tomorrow."
+  ],
+  "ok": "Send it to Mike, tomorrow."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Send it to John, I mean Mike, tomorrow.",
+   "ru"
+  ],
+  "ok": "Send it to John, I mean Mike, tomorrow."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Treffen am Montag, ich meine am Dienstag."
+  ],
+  "ok": "Treffen am Dienstag."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Treffen am Montag, ich meine am Dienstag.",
+   "ru"
+  ],
+  "ok": "Treffen am Montag, ich meine am Dienstag."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Говори точнее, пожалуйста."
+  ],
+  "ok": "Говори точнее, пожалуйста."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Говори точнее, пожалуйста.",
+   "ru"
+  ],
+  "ok": "Говори точнее, пожалуйста."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Я думаю, точнее знаю."
+  ],
+  "ok": "Я знаю."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Я думаю, точнее знаю.",
+   "ru"
+  ],
+  "ok": "Я думаю, точнее знаю."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Позвони маме завтра, вернее, сегодня."
+  ],
+  "ok": "Позвони маме сегодня."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Позвони маме завтра, вернее, сегодня.",
+   "ru"
+  ],
+  "ok": "Позвони маме завтра, вернее, сегодня."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Да, вернее, нет."
+  ],
+  "ok": "Нет."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Да, вернее, нет.",
+   "ru"
+  ],
+  "ok": "Да, вернее, нет."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Возьми синюю ручку, вернее, красную ручку."
+  ],
+  "ok": "Возьми красную ручку."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Возьми синюю ручку, вернее, красную ручку.",
+   "ru"
+  ],
+  "ok": "Возьми синюю ручку, вернее, красную ручку."
+ },
+ {
+  "fn": "apply_self_corrections",
+  "args": [
+   "Первое готово. Второе красное, вернее, зелёное."
+  ],
+  "ok": "Первое готово. Второе зелёное."
+ },
+ {
+  "fn": "clean_text",
+  "args": [
+   "Первое готово. Второе красное, вернее, зелёное.",
+   "ru"
+  ],
+  "ok": "Первое готово. Второе красное, вернее, зелёное."
  },
  {
   "fn": "added_content_ratio",

@@ -88,6 +88,30 @@ UK_RAW = [
     "відміна",
 ]
 
+# Самоисправления «вернее / точнее / я имею в виду»
+SELF_CORRECTIONS = [
+    "Кнопку красной, вернее, синей сделай.",
+    "Сделай кнопку красной, вернее, синей.",
+    "Сделай кнопку красной, вернее, синей сейчас же.",
+    "Отправь Маше, я имею в виду Даше, файл.",
+    "Позвони Ивану, я имею в виду Петру, завтра.",
+    "Встреча в среду, точнее, в четверг.",
+    "Приходи в пять, точнее, в шесть часов.",
+    "Купи два литра, вернее, три литра молока.",
+    "Купи 2 литра, вернее, 3 литра.",
+    "Красной, вернее, синей.",
+    "Make the button red, I mean blue.",
+    "Meet on Monday, or rather on Tuesday.",
+    "Send it to John, I mean Mike, tomorrow.",
+    "Treffen am Montag, ich meine am Dienstag.",
+    "Говори точнее, пожалуйста.",
+    "Я думаю, точнее знаю.",
+    "Позвони маме завтра, вернее, сегодня.",
+    "Да, вернее, нет.",
+    "Возьми синюю ручку, вернее, красную ручку.",
+    "Первое готово. Второе красное, вернее, зелёное.",
+]
+
 LLM_PAIRS = [
     ("я хочу чтобы ты проверил эту кнопку", "Я хочу, чтобы ты проверил эту кнопку."),
     ("я хочу чтобы ты проверил эту кнопку", "Я проверю эту кнопку."),
@@ -154,6 +178,9 @@ def cases():
                    "strip_prompt_echo", "extract_translate_cmd",
                    "extract_rewrite_cmd", "cyrillic_share", "_merge_stub_sentences"):
             add((fn, [t]))
+    for t in SELF_CORRECTIONS:
+        add(("apply_self_corrections", [t]))
+        add(("clean_text", [t, "ru"]))
     for a, b in LLM_PAIRS:
         for fn in ("added_content_ratio", "invented_numbers",
                    "drop_invented_dashes", "text_similarity", "same_script",

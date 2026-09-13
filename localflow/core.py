@@ -1321,6 +1321,55 @@ _CORRECT_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 
+_NUMBER_WORDS = {
+    "ноль", "один", "одна", "одно", "два", "две", "три", "четыре", "пять",
+    "шесть", "семь", "восемь", "девять", "десять", "двадцать", "тридцать",
+    "сто", "тысяча", "тысячи", "тысяч", "полтора", "пол",
+    "дві", "чотири", "п'ять", "шість", "сім", "вісім", "дев'ять",
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "twenty", "hundred",
+    "null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht",
+    "neun", "zehn", "zwanzig", "hundert",
+}
+
+def _parallel_words(a: str, b: str) -> int:
+    """Может ли b стоять на месте a. 2 — надёжно (то же слово, оба числа),
+    1 — слабо (одинаковая последняя буква), 0 — нет."""
+    a, b = a.lower().strip("«»\"'()"), b.lower().strip("«»\"'()")
+    if not a or not b:
+        return 0
+    if a == b:
+        return 2
+
+    def is_num(w):
+        return w.isdigit() or w in _NUMBER_WORDS
+
+    if is_num(a) and is_num(b):
+        return 2
+    if (len(a) >= 3 and len(b) >= 3 and a.isalpha() and b.isalpha()
+            and a[-1] == b[-1]):
+        return 1
+    return 0
+
+def _correction_span(words: list[str], fix: list[str]) -> int:
+    """Сколько последних слов из words заменяет исправление fix."""
+    limit = min(4, len(words), len(fix))
+    for k in range(limit, 0, -1):
+        scores = [_parallel_words(words[-k + i], fix[i]) for i in range(k)]
+        if not all(scores):
+            continue
+        # Одинаковые окончания в русском встречаются на каждом шагу
+        # («Купи два литра» / «три литра молока» совпадают по последним
+        # буквам целиком), поэтому длинная параллель засчитывается, только
+        # если в ней есть хоть одна надёжная пара
+        if k == 1 or max(scores) == 2:
+            return k
+    n = min(len(fix), 4)
+    # Хоть одно слово из сказанного до маркера уходит всегда: иначе в тексте
+    # остались бы оба варианта. Но и всё предложение целиком не съедаем,
+    # если в нём больше одного слова.
+    return min(n, len(words) - 1) if len(words) > 1 else len(words)
+
 def apply_self_corrections(text: str) -> str:
     for _ in range(3):  # исправлений может быть несколько
         m = _CORRECT_RE.search(text)
@@ -1330,19 +1379,19 @@ def apply_self_corrections(text: str) -> str:
         repl = re.match(r"[^,.!?\n]+", after)
         if not repl:
             break
-        n = min(len(repl.group(0).split()), 4)
         # Хвост текущего предложения до маркера
         sent_start = max(before.rfind(c) for c in ".!?\n") + 1
         head, tail = before[:sent_start], before[sent_start:]
         words = tail.split()
-        if n >= len(words):
-            # Замена длиннее всего сказанного — просто выбрасываем маркер
-            kept = words
-        else:
-            kept = words[:-n]
+        n = _correction_span(words, repl.group(0).split())
+        kept = words[:-n] if n else words
         joined = " ".join(kept)
+        after = after.lstrip()
+        if not joined and words and words[0][:1].isupper():
+            # Заменили всё предложение — заглавная переезжает на исправление
+            after = after[:1].upper() + after[1:]
         text = (head + (" " if head.strip() and joined else "")
-                + joined + (" " if joined else "") + after.lstrip())
+                + joined + (" " if joined else "") + after)
     return text
 
 _stats_lock = threading.Lock()
