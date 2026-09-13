@@ -6,12 +6,13 @@
 
 import ctypes
 import sys
-import threading
 import time
 
 import pytest
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="только Windows")
+
+from conftest import pump  # noqa: E402
 
 if sys.platform == "win32":
     from localflow.core import CLIPBOARD_RESTORE_DELAY
@@ -23,38 +24,6 @@ if sys.platform == "win32":
     user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 
-@pytest.fixture(scope="module")
-def window():
-    import tkinter as tk
-
-    root = tk.Tk()
-    root.title("LocalFlow test window")
-    root.geometry("500x200+80+80")
-    text = tk.Text(root)
-    text.pack(fill="both", expand=True)
-    root.attributes("-topmost", True)
-    root.update()
-    hwnd = int(root.wm_frame(), 16)
-    for _ in range(20):
-        user32.SetForegroundWindow(hwnd)
-        root.focus_force()
-        text.focus_set()
-        root.update()
-        if user32.GetForegroundWindow() == hwnd:
-            break
-        time.sleep(0.1)
-    focused = user32.GetForegroundWindow() == hwnd
-    yield root, text, focused
-    root.destroy()
-
-
-def pump(root, sec=0.4):
-    end = time.monotonic() + sec
-    while time.monotonic() < end:
-        root.update()
-        time.sleep(0.01)
-
-
 def content(text):
     return text.get("1.0", "end-1c")
 
@@ -62,12 +31,10 @@ def content(text):
 @pytest.fixture
 def hook():
     events = []
-    got = threading.Event()
     logic = KeyboardLogic(is_down=keyhook.is_key_down)
 
     def on_event(ev):
         events.append(ev)
-        got.set()
 
     h = keyhook.KeyHook(logic, on_event, accept_injected=True)
     assert h.start(), h.error
@@ -149,7 +116,7 @@ def test_sounds_and_language(tmp_path):
     assert system.system_ui_lang() in ("ru", "uk", "de", "en")
 
 
-def test_app_builds(monkeypatch):
+def test_app_builds():
     from localflow import app
 
     a = app.App()

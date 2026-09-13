@@ -15,6 +15,9 @@ on:
       - "localflow/transcriber.py"
       - "localflow/audio_util.py"
       - "tests/test_engine_real.py"
+      - "tests/test_e2e_windows.py"
+      - "localflow/dictation.py"
+      - "localflow/win/**"
       - "tests/fixtures/**"
       - "tools/fetch_models.py"
       - "engine/**"
@@ -164,7 +167,7 @@ jobs:
           LOCALFLOW_ENGINE_EXE: ${{ github.workspace }}\engine\whisper-server.exe
           LOCALFLOW_TEST_MODELS: ${{ github.workspace }}\models
           LOCALFLOW_TEST_MODEL: ${{ matrix.model }}
-        run: python -m pytest -s -v tests/test_engine_real.py
+        run: python -m pytest -s -v tests/test_engine_real.py tests/test_e2e_windows.py
 
   publish:
     needs: test-engine
