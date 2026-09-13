@@ -34,3 +34,12 @@ jobs:
 
       - name: Текстовая логика совпадает с версией для Mac
         run: python -m pytest -q tests/test_core_golden.py
+
+      - name: Снимок таблетки и нагрузка на процессор
+        run: python tools/pill_snapshot.py build/pill.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pill-snapshot
+          path: build/pill.png
+          retention-days: 14
