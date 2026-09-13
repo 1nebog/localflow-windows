@@ -1,6 +1,7 @@
 """Умное исправление без настоящей модели: режимы, скачивание, отказ
 видеокарты, проверки ответа модели."""
 
+import dataclasses
 import threading
 import time
 from pathlib import Path
@@ -61,6 +62,13 @@ def wait(cond, timeout=3.0):
     return False
 
 
+@pytest.fixture(autouse=True)
+def tiny_models(monkeypatch):
+    """Модели по килобайту: на Windows файл в 5 ГБ правда занимает 5 ГБ."""
+    for mode, m in list(LLM_MODELS.items()):
+        monkeypatch.setitem(LLM_MODELS, mode, dataclasses.replace(m, size=1000 + len(mode)))
+
+
 @pytest.fixture
 def models(tmp_path):
     return tmp_path / "models"
@@ -69,8 +77,7 @@ def models(tmp_path):
 def put_model(models, mode):
     m = LLM_MODELS[mode]
     models.mkdir(exist_ok=True)
-    with open(models / m.file, "wb") as f:
-        f.truncate(m.size)          # разреженный файл: размер как у настоящей
+    (models / m.file).write_bytes(b"\0" * m.size)
 
 
 @pytest.fixture
