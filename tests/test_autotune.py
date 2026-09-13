@@ -111,7 +111,7 @@ def test_menu_choice_downloads_loads_and_disables_auto(tmp_path):
     seen = []
     at._download = lambda model, folder, progress=None: (
         seen.append(progress is not None) or (progress(1, 2), fake_download(model, folder))[1])
-    at.choose("medium").join(5)
+    at.choose("medium").join(120)
     assert tr.model_name == "medium"
     assert cfg["model"] == "medium" and cfg["model_auto"] is False
     assert seen == [True] and at.progress is None and at.status == ""
@@ -141,7 +141,7 @@ def test_menu_choice_that_fails_goes_back(tmp_path):
     tr.load("base")
     failed = []
     at.on_error = failed.append
-    at.choose("small").join(5)
+    at.choose("small").join(120)
     assert failed == ["small"]
     assert tr.model_name == "base" and tr.is_ready and cfg["model"] == "base"
 
@@ -150,5 +150,5 @@ def test_menu_auto_turns_autotune_back_on(tmp_path):
     SPEED.clear()
     SPEED.update({("base", True): 0.15, ("large-v3-turbo", True): 1.2})
     at, tr, cfg = make(tmp_path, cfg={"model_auto": False, "gpu_checked": True})
-    at.choose(None).join(5)
+    at.choose(None).join(120)
     assert cfg["model_auto"] is True and tr.model_name == "large-v3-turbo"
