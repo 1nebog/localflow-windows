@@ -26,6 +26,9 @@ class Item:
     checked: bool = False
     enabled: bool = True
     children: list | None = field(default=None)
+    # после выбора вернуть фокус в прежнее окно; не нужно, если пункт сам
+    # открывает окно (иначе оно появится позади)
+    focus_back: bool = True
 
 
 def pretty_key(chord) -> str:
@@ -97,7 +100,7 @@ def _model_items(app) -> list[Item]:
     auto = app.autotune.auto
     current = app.transcriber.model_name
     auto_label = tr("model_auto")
-    if auto and current in MODEL_LABELS:
+    if auto and (app.transcriber.is_ready or app.started) and current in MODEL_LABELS:
         auto_label += f" · {MODEL_LABELS[current]}"
     items = [Item(auto_label, lambda: app.choose_model(None), checked=auto), None]
     for key, model in WHISPER_MODELS.items():
@@ -132,7 +135,7 @@ def build(app) -> list:
     pastes = [("clipboard", tr("paste_fast")), ("type", tr("paste_type"))]
     return [
         Item(status_text(app), enabled=False),
-        Item(tr("menu_settings"), app.open_panel),
+        Item(tr("menu_settings"), app.open_panel, focus_back=False),
         None,
         Item(tr("model"), children=_model_items(app)),
         Item(tr("language"), children=_radio(langs, app.transcriber.language, app.set_language)),

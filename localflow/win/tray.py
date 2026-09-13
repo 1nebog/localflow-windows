@@ -84,6 +84,16 @@ class ForegroundTracker:
             self._hook = None
 
 
+class _OpensWindow:
+    """Пункт меню, который сам открывает окно: фокус ему, а не прежнему окну."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __call__(self):
+        self.fn()
+
+
 class Tray:
     def __init__(self, ui, build_menu):
         self.ui = ui
@@ -216,8 +226,9 @@ class Tray:
             self._menu_open = False
         action = actions.get(cmd)
         if action is not None:
-            # человек выбрал пункт — фокус обратно туда, где он работал
-            self.foreground.restore()
+            if not isinstance(action, _OpensWindow):
+                # человек выбрал пункт — фокус обратно туда, где он работал
+                self.foreground.restore()
             try:
                 action()
             except Exception:
@@ -241,6 +252,7 @@ class Tray:
                 w32.user32.AppendMenuW(hmenu, flags | w32.MF_POPUP, sub, label)
             else:
                 cmd = max(actions, default=0) + 1
-                actions[cmd] = item.action
+                actions[cmd] = (item.action if item.focus_back or item.action is None
+                                else _OpensWindow(item.action))
                 w32.user32.AppendMenuW(hmenu, flags, cmd, label)
         return hmenu

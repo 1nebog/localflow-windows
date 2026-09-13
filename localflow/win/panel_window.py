@@ -102,6 +102,7 @@ class PanelWindow:
             f"--window-size={WIDTH},{min(HEIGHT, max(max_h, 480))}",
             "--no-first-run", "--no-default-browser-check", "--disable-sync",
             "--disable-extensions", "--disable-background-mode",
+            "--disable-features=Translate,msEdgeTranslate",
         ]
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         # Если прежний Edge этой панели ещё жив без окон, он сам откроет

@@ -152,7 +152,7 @@ def options(app) -> dict:
     """Варианты для выпадающих списков: [[значение, подпись], …]."""
     t = app.transcriber
     auto = tr("model_auto")
-    if app.autotune.auto and t.model_name in MODEL_LABELS:
+    if app.autotune.auto and (t.is_ready or app.started) and t.model_name in MODEL_LABELS:
         auto += f" · {MODEL_LABELS[t.model_name]}"
     models = [["auto", auto]]
     for key, model in WHISPER_MODELS.items():
@@ -289,6 +289,7 @@ class HotkeyCapture:
         self.app = app
         self._call = call or (lambda fn: fn())
         self._clock = clock
+        self.timeout = CAPTURE_TIMEOUT_SEC
         self._lock = threading.Lock()
         self._gen = 0
         self._state = "idle"
@@ -305,14 +306,25 @@ class HotkeyCapture:
             gen = self._gen
             self._state, self._msg, self._t0 = "waiting", "", self._clock()
         self.app.keys.capture(lambda chord: self._done(gen, chord))
+        # панель могли закрыть посреди ожидания — клавиатура не должна
+        # остаться «в режиме назначения»
+        timer = threading.Timer(self.timeout, self._expire, args=(gen,))
+        timer.daemon = True
+        timer.start()
         return self.poll()
+
+    def _expire(self, gen: int) -> None:
+        with self._lock:
+            stale = gen == self._gen and self._state == "waiting"
+        if stale:
+            self.cancel()
 
     def cancel(self) -> dict:
         with self._lock:
             self._gen += 1
             self._state, self._msg = "idle", ""
         self.app.keys.cancel_capture()
-        return self.poll()
+        return self._snapshot()
 
     def _done(self, gen: int, chord) -> None:
         with self._lock:
@@ -340,9 +352,12 @@ class HotkeyCapture:
     def poll(self) -> dict:
         with self._lock:
             waiting_too_long = (self._state == "waiting"
-                                and self._clock() - self._t0 > CAPTURE_TIMEOUT_SEC)
+                                and self._clock() - self._t0 > self.timeout)
         if waiting_too_long:
             self.cancel()
+        return self._snapshot()
+
+    def _snapshot(self) -> dict:
         with self._lock:
             return {"state": self._state, "msg": self._msg,
                     "label": menu.pretty_key(self.app.keys.hotkey),
@@ -529,7 +544,8 @@ def _icon_png() -> bytes:
 
 
 PANEL_HTML = r"""<!DOCTYPE html>
-<html lang="__LANG__"><head><meta charset="utf-8">
+<html lang="__LANG__" translate="no"><head><meta charset="utf-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LocalFlow</title>
 <link rel="icon" href="/icon.png">
@@ -544,7 +560,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
   --border:#3a3a3c; --shadow:0 1px 2px rgba(0,0,0,.3); --ok:#30d158;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{background:var(--bg)}
+html{background:var(--bg);scrollbar-color:var(--border) transparent}
 body{font:14px/1.45 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
   background:var(--bg);color:var(--text);max-width:720px;margin:0 auto;
   padding:22px 20px 60px;transition:background .2s,color .2s}

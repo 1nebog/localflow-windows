@@ -275,3 +275,21 @@ def test_app_icon_png():
     assert img.shape == (64, 64, 4) and img[0, 0, 3] == 0 and img[32, 5, 3] == 255
     assert (img[32, 32, :3] > 200).all() or img[32, 32, 2] > 200
     assert icons.png_bytes(img)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_auto_model_label_waits_for_first_start(tmp_path):
+    app, _ = make_app(tmp_path)
+    app.started, app.transcriber.is_ready = False, False
+    assert panel.options(app)["model"][0] == ["auto", "Авто"]
+
+
+def test_capture_ends_by_itself_when_panel_is_closed(tmp_path):
+    app, _ = make_app(tmp_path)
+    cap = panel.HotkeyCapture(app)
+    cap.timeout = 0.05
+    cap.start()
+    for _ in range(100):
+        if not app.keys.capturing:
+            break
+        time.sleep(0.01)
+    assert not app.keys.capturing              # никто не спрашивал состояние — всё равно снято

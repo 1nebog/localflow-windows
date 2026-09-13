@@ -7,12 +7,15 @@
 """
 
 import ctypes
+import os
 import sys
 import tempfile
 import time
 from ctypes import wintypes
 from pathlib import Path
 
+# настройки и история — во временной папке, как в проверках
+os.environ.setdefault("LOCALFLOW_HOME", tempfile.mkdtemp(prefix="lf-snap-"))
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT), str(ROOT / "tools")]
 

@@ -104,6 +104,7 @@ def test_menu_layout_and_actions(tmp_path):
     app, calls = make_app(tmp_path)
     items = menu.build(app)
     assert not items[0].enabled and items[1].label == "Настройки…" and items[2] is None
+    assert not items[1].focus_back and items[3].focus_back
     items[1].action()
     labels = [i and i.label for i in items]
     assert labels[-2:] == ["Пауза", "Выход"]
