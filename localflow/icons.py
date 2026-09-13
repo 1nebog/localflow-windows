@@ -125,3 +125,18 @@ def png_bytes(rgba: np.ndarray) -> bytes:
 
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def ico_bytes(sizes=(16, 20, 24, 32, 40, 48, 64, 256)) -> bytes:
+    """Значок .exe и установщика: несколько размеров в одном файле (PNG внутри)."""
+    import struct
+
+    images = [png_bytes(app_icon(s)) for s in sizes]
+    head = struct.pack("<HHH", 0, 1, len(images))
+    offset = 6 + 16 * len(images)
+    entries = b""
+    for size, data in zip(sizes, images):
+        dim = 0 if size >= 256 else size
+        entries += struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    return head + entries + b"".join(images)

@@ -30,6 +30,10 @@ def _local() -> Path:
 
 _home = os.environ.get("LOCALFLOW_HOME")
 
+# Собранная программа (LocalFlow.exe из установщика): движок лежит рядом с ней
+FROZEN = bool(getattr(sys, "frozen", False))
+APP_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parents[1]
+
 CONFIG_DIR = Path(_home) if _home else _roaming() / APP_NAME
 DATA_DIR = Path(_home) if _home else _local() / APP_NAME
 MODELS_DIR = DATA_DIR / "models"

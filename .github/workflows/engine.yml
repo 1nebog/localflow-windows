@@ -1,4 +1,4 @@
-# Сборка движка распознавания под любое железо и проверка на нём.
+# Сборка движка распознавания под любое железо, проверка на нём и установщик.
 #
 # Одна сборка на все компьютеры:
 #   - варианты под разные процессоры, от старых до новых (движок сам берёт
@@ -22,10 +22,19 @@ on:
       - "tools/fetch_models.py"
       - "engine/**"
       - ".github/workflows/engine.yml"
+      - "localflow/**"
+      - "packaging/**"
+      - "tools/build_installer.py"
+      - "tools/check_installer.py"
+      - "requirements*.txt"
   workflow_dispatch:
     inputs:
       publish:
         description: "Выложить сборку движка в Releases"
+        type: boolean
+        default: false
+      publish_app:
+        description: "Выложить установщик LocalFlow в Releases"
         type: boolean
         default: false
 
@@ -168,6 +177,91 @@ jobs:
           LOCALFLOW_TEST_MODELS: ${{ github.workspace }}\models
           LOCALFLOW_TEST_MODEL: ${{ matrix.model }}
         run: python -m pytest -s -v tests/test_engine_real.py tests/test_e2e_windows.py
+
+  installer:
+    needs: build-whisper
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-engine-win-x64
+          path: engine-bin
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Установка
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Сборка установщика
+        run: python tools/build_installer.py --engine engine-bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalFlow-Setup
+          path: build/LocalFlow-Setup-*.exe
+          retention-days: 30
+
+      - name: Модель из кэша
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: model-base-v1
+
+      - name: Скачивание модели (код программы)
+        run: python tools/fetch_models.py base --dest models
+
+      - name: Установка, запуск, закрытие и удаление на чистой Windows
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem build\LocalFlow-Setup-*.exe | Select-Object -First 1
+          python tools/check_installer.py $setup.FullName --models models
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: install-log
+          path: |
+            build/install.log
+            ~/AppData/Local/LocalFlow/logs/localflow.log
+          retention-days: 14
+
+  publish-app:
+    needs: [installer, test-engine]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_app
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LocalFlow-Setup
+          path: setup
+      - name: Выкладка установщика в Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd setup
+          FILE=$(ls LocalFlow-Setup-*.exe | head -1)
+          VERSION=${FILE#LocalFlow-Setup-}; VERSION=${VERSION%.exe}
+          sha256sum "$FILE" | tee "$FILE.sha256"
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --title "LocalFlow $VERSION" \
+            --notes "Скачай LocalFlow-Setup-$VERSION.exe и запусти. / Download LocalFlow-Setup-$VERSION.exe and run it." \
+            "$FILE" "$FILE.sha256"
 
   publish:
     needs: test-engine

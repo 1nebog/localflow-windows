@@ -22,12 +22,16 @@ from .core import tr
 from .dictation import Dictation
 from .engine.catalog import WHISPER_SERVER_EXE
 from .keys import KeyboardLogic, chord_from_config, chord_label, normalize
-from .paths import DATA_DIR, ENGINES_DIR, LOG_DIR, MODELS_DIR
+from .paths import APP_DIR, DATA_DIR, ENGINES_DIR, FROZEN, LOG_DIR, MODELS_DIR
 from .transcriber import Transcriber
 
 log = logging.getLogger("localflow")
 
 TRAY_REFRESH_SEC = 0.3
+MUTEX_NAME = "Local\\LocalFlow-single-instance"
+MAIN_WINDOW_CLASS = "LocalFlowMain"
+COMMAND_MESSAGE = "LocalFlow-Command"
+COMMANDS = {"settings": 1, "quit": 2}
 
 
 def setup_logging(console: bool) -> None:
@@ -56,14 +60,42 @@ def single_instance() -> bool:
         return True
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.restype = ctypes.c_void_p
-    handle = kernel32.CreateMutexW(None, False, "Local\\LocalFlow-single-instance")
+    handle = kernel32.CreateMutexW(None, False, MUTEX_NAME)
     single_instance.handle = handle   # держим до выхода
     return ctypes.get_last_error() != 183   # ERROR_ALREADY_EXISTS
 
 
 def engine_exe() -> Path:
     env = os.environ.get("LOCALFLOW_ENGINE_EXE")
-    return Path(env) if env else ENGINES_DIR / "whisper" / WHISPER_SERVER_EXE
+    if env:
+        return Path(env)
+    bundled = APP_DIR / "engine" / WHISPER_SERVER_EXE
+    if FROZEN or bundled.exists():
+        return bundled
+    return ENGINES_DIR / "whisper" / WHISPER_SERVER_EXE
+
+
+def send_command(name: str, wait_exit: float = 0.0) -> bool:
+    """Команда уже запущенной копии (второй запуск, установщик).
+    False — запущенной копии нет."""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.FindWindowW.restype = ctypes.c_void_p
+    user32.FindWindowW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
+    user32.RegisterWindowMessageW.argtypes = (ctypes.c_wchar_p,)
+    user32.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t)
+    user32.GetWindowThreadProcessId.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+    user32.IsWindow.argtypes = (ctypes.c_void_p,)
+    hwnd = user32.FindWindowW(MAIN_WINDOW_CLASS, None)
+    if not hwnd:
+        return False
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    user32.AllowSetForegroundWindow(pid.value)    # пусть панель откроется поверх
+    user32.PostMessageW(hwnd, user32.RegisterWindowMessageW(COMMAND_MESSAGE), COMMANDS[name], 0)
+    end = time.monotonic() + wait_exit
+    while time.monotonic() < end and user32.IsWindow(hwnd):
+        time.sleep(0.1)
+    return True
 
 
 class App:
@@ -326,6 +358,14 @@ class App:
         self.dictation.history.clear()
         self._history_changed()
 
+    def _on_command(self, wparam, lparam):
+        log.info("Команда от второго запуска: %s", wparam)
+        if wparam == COMMANDS["settings"]:
+            self.open_panel()
+        elif wparam == COMMANDS["quit"]:
+            self.quit()
+        return 0
+
     def quit(self) -> None:
         log.info("Выход")
         if self.ui is not None:
@@ -363,6 +403,7 @@ class App:
         self.tray.add(menu.tray_state(self), menu.tooltip(self))
         self.ui.every(TRAY_REFRESH_SEC, self._refresh_tray)
         self.ui.on(w32.WM_ENDSESSION, lambda wp, lp: self._shutdown() if wp else None)
+        self.ui.on(w32.user32.RegisterWindowMessageW(COMMAND_MESSAGE), self._on_command)
 
         if not self.hook.start():
             self.hook_error = self.hook.error
@@ -371,6 +412,11 @@ class App:
         threading.Thread(target=self._load_model, daemon=True, name="model-loader").start()
         threading.Thread(target=self._idle_loop, daemon=True, name="idle").start()
         self.pill.prewarm()
+        if FROZEN and not self.cfg.get("intro_shown"):
+            # первый запуск после установки: сразу видно клавишу и загрузку модели
+            self.cfg["intro_shown"] = True
+            core.save_config(self.cfg)
+            self.ui.after(0.5, self.open_panel)
 
         # Ctrl+C в консоли: цикл окон спит в Windows и сам его не заметит
         self._console_handler = w32.HANDLER_ROUTINE(lambda ev: bool(self.quit() or True))
@@ -382,11 +428,21 @@ class App:
             self._shutdown()
 
 
-def main() -> None:
-    setup_logging(console=True)
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if "--quit" in argv:
+        # установщик закрывает программу перед обновлением и удалением
+        send_command("quit", wait_exit=15)
+        return
+    setup_logging(console=not FROZEN)
     if not single_instance():
-        log.info("LocalFlow уже запущен")
+        log.info("LocalFlow уже запущен — открываю настройки")
+        send_command("settings")
         return
     from .win import w32
     w32.set_dpi_aware()
-    App().run()
+    try:
+        App().run()
+    except Exception:
+        log.exception("LocalFlow упал")
+        raise

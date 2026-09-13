@@ -249,3 +249,17 @@ def test_tray_icons(light):
     assert icons["loading"][..., 3].max() < 140          # бледный
     orange = icons["error"][..., :3][icons["error"][..., 3] > 200]
     assert len(orange) and orange[:, 0].mean() > 200 and orange[:, 2].mean() < 80
+
+
+def test_exe_icon_has_all_sizes():
+    import struct
+
+    from localflow.icons import ico_bytes
+
+    data = ico_bytes((16, 32, 256))
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind, count) == (0, 1, 3)
+    sizes = [data[6 + 16 * i] or 256 for i in range(count)]
+    assert sizes == [16, 32, 256]
+    first_offset = struct.unpack("<I", data[6 + 12:6 + 16])[0]
+    assert data[first_offset:first_offset + 8] == b"\x89PNG\r\n\x1a\n"
