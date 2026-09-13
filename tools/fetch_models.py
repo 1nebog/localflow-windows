@@ -15,6 +15,11 @@ from localflow.engine.download import download  # noqa: E402
 
 
 def main() -> None:
+    # Консоль Windows по умолчанию в однобайтной кодировке и падает на
+    # кириллице — выводим в UTF-8, непечатное заменяем
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("models", nargs="+", choices=sorted(WHISPER_MODELS))
     ap.add_argument("--dest", default="models")

@@ -23,6 +23,9 @@ on:
         default: false
 
 env:
+  # кириллица в выводе на Windows
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
   WHISPER_REF: b5130
   VULKAN_VERSION: 1.4.357.0
   ENGINE_REV: "1"   # поменять, чтобы пересобрать без смены версии

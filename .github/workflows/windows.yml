@@ -8,6 +8,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # кириллица в выводе на Windows
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+
 jobs:
   tests:
     runs-on: windows-latest
