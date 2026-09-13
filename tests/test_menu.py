@@ -33,6 +33,7 @@ def make_app(tmp_path, **kw):
         set_style=calls.set_style, set_translate=calls.set_translate,
         set_paste=calls.set_paste, set_ui_lang=calls.set_ui_lang,
         paste_from_history=calls.paste, toggle_pause=calls.pause, quit=calls.quit,
+        open_panel=calls.open_panel,
     )
     for k, v in kw.items():
         setattr(app, k, v)
@@ -102,7 +103,8 @@ def test_background_switch_keeps_working_icon(tmp_path):
 def test_menu_layout_and_actions(tmp_path):
     app, calls = make_app(tmp_path)
     items = menu.build(app)
-    assert not items[0].enabled and items[1] is None
+    assert not items[0].enabled and items[1].label == "Настройки…" and items[2] is None
+    items[1].action()
     labels = [i and i.label for i in items]
     assert labels[-2:] == ["Пауза", "Выход"]
 
@@ -124,7 +126,7 @@ def test_menu_layout_and_actions(tmp_path):
     find(find(items, "Язык интерфейса").children, "English").action()
     find(items, "Пауза").action()
     find(items, "Выход").action()
-    assert calls == [("choose_model", "tiny"), ("choose_model", None),
+    assert calls == [("open_panel",), ("choose_model", "tiny"), ("choose_model", None),
                      ("set_language", "en"), ("set_style", "chat"),
                      ("set_translate", "de"), ("set_paste", "type"),
                      ("set_ui_lang", "en"), ("pause",), ("quit",)]

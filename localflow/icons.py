@@ -87,3 +87,41 @@ def tray_icon(state: str, size: int = 16, light: bool = False) -> np.ndarray:
         out[..., 3] = new_a
     out[..., 3] *= 255
     return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+_ACCENT = (10, 132, 255)
+
+
+def app_icon(size: int = 64) -> np.ndarray:
+    """Значок программы (окно панели, установщик): белая волна на синем
+    скруглённом квадрате. RGBA, прозрачность не предумножена."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32) + 0.5
+    r = size * 0.22
+    half = size / 2 - size * 0.02
+    qx = np.maximum(np.abs(xx - size / 2) - (half - r), 0)
+    qy = np.maximum(np.abs(yy - size / 2) - (half - r), 0)
+    square = np.clip(0.5 - (np.sqrt(qx ** 2 + qy ** 2) - r), 0, 1)
+    inner = round(size * 0.62)
+    bars = np.zeros((size, size), np.float32)
+    o = (size - inner) // 2
+    bars[o:o + inner, o:o + inner] = _bars(inner)
+    out = np.zeros((size, size, 4), np.float32)
+    for i in range(3):
+        out[..., i] = _ACCENT[i] * (1 - bars) + 255 * bars
+    out[..., 3] = square * 255
+    return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+def png_bytes(rgba: np.ndarray) -> bytes:
+    """RGBA → PNG без сторонних библиотек."""
+    import struct
+    import zlib
+
+    h, w, _ = rgba.shape
+    raw = b"".join(b"\x00" + rgba[y].tobytes() for y in range(h))
+
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))

@@ -109,7 +109,7 @@ class KeyHook:
 
     def _callback(self, code, wparam, lparam):
         try:
-            if (code == 0 and not self.paused
+            if (code == 0 and (not self.paused or self.logic.capturing)
                     and wparam in (WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP)):
                 kb = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                 injected = bool(kb.flags & LLKHF_INJECTED)

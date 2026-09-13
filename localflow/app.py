@@ -15,13 +15,13 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import __version__, core, menu, strings
-from .audio import AudioRecorder
+from . import __version__, core, menu, panel, strings
+from .audio import AudioRecorder, list_input_devices
 from .autotune import START_MODEL, AutoTune
 from .core import tr
 from .dictation import Dictation
 from .engine.catalog import WHISPER_SERVER_EXE
-from .keys import KeyboardLogic, chord_from_config, chord_label
+from .keys import KeyboardLogic, chord_from_config, chord_label, normalize
 from .paths import DATA_DIR, ENGINES_DIR, LOG_DIR, MODELS_DIR
 from .transcriber import Transcriber
 
@@ -117,6 +117,8 @@ class App:
         self.autotune.on_error = lambda name: self.notify(
             tr("error_title"), tr("model_failed").format(model=core.MODEL_LABELS.get(name, name)))
         self.hook = keyhook.KeyHook(self.keys, d.on_key_event)
+        self.pill_animation = (self.cfg.get("pill_animation") if self.cfg.get("pill_animation") in core.PILL_ANIMATIONS
+                               else core.DEFAULT_PILL_ANIMATION)
 
         self.paused = False
         self.started = False          # модель хоть раз запустилась
@@ -125,6 +127,9 @@ class App:
         self.ui = None
         self.tray = None
         self.pill = None
+        self.panel_server = None
+        self.panel_window = None
+        self._ui_thread = None
         self._shut = False
 
     # --- Уведомления и значок ------------------------------------------------
@@ -230,6 +235,97 @@ class App:
         t.daemon = True
         t.start()
 
+    # --- Панель ---------------------------------------------------------------
+
+    def call_ui(self, fn):
+        """Выполнить в потоке окон и дождаться: так настройки из панели и из
+        меню трея никогда не меняются одновременно."""
+        if self.ui is None or threading.get_ident() == self._ui_thread:
+            return fn()
+        box, done = {}, threading.Event()
+
+        def run():
+            try:
+                box["value"] = fn()
+            except Exception as exc:
+                box["error"] = exc
+            finally:
+                done.set()
+
+        self.ui.post(run)
+        if not done.wait(10):
+            raise TimeoutError("поток окон не ответил")
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
+    def open_panel(self) -> None:
+        from .win import panel_window
+
+        if self.panel_server is None:
+            self.panel_server = panel.PanelServer(self, call=self.call_ui)
+        if not self.panel_server.start():
+            return
+        if self.panel_window is None:
+            self.panel_window = panel_window.PanelWindow(DATA_DIR / "panel")
+        try:
+            self.panel_window.open(self.panel_server.url + "#settings")
+        except Exception as exc:
+            log.error("Панель не открылась: %s", exc)
+
+    def list_mics(self) -> list[dict]:
+        return list_input_devices()
+
+    def set_hotkey(self, chord) -> None:
+        chord = normalize(chord)
+        self.keys.set_hotkey(chord)
+        self._set("hotkey", list(chord))
+
+    def set_mic(self, name: str | None) -> None:
+        self.recorder.device = name
+        self._set("mic_device", name or "")
+        threading.Thread(target=self.recorder.warm_up, daemon=True, name="mic-warmup").start()
+
+    def set_animation(self, name: str) -> None:
+        self.pill_animation = name
+        if self.pill is not None:
+            self.pill.set_animation(name)
+        self._set("pill_animation", name)
+
+    def set_sounds(self, on: bool) -> None:
+        self.sounds.enabled = bool(on)
+        self._set("sounds", bool(on))
+
+    def set_idle_unload(self, minutes: int) -> None:
+        self.dictation.idle_unload_min = minutes
+        self._set("idle_unload_min", minutes)
+
+    def autostart_enabled(self) -> bool:
+        from .win import autostart
+        return autostart.is_enabled()
+
+    def set_autostart(self, on: bool) -> bool:
+        from .win import autostart
+        return autostart.set_enabled(on)
+
+    def set_profiles(self, profiles: dict) -> None:
+        self.dictation.app_profiles = profiles
+        self._set("app_profiles", profiles)
+
+    def _history_changed(self) -> None:
+        core.save_history(self.dictation.history)
+        if self.dictation.autodict is not None:
+            self.dictation.autodict.invalidate()
+
+    def delete_history(self, ts) -> None:
+        h = self.dictation.history
+        h[:] = [it for it in h if it.get("ts") != ts]     # тот же список: его читает автословарь
+        self._history_changed()
+
+    def clear_history(self) -> None:
+        self.dictation.history.clear()
+        self._history_changed()
+
     def quit(self) -> None:
         log.info("Выход")
         if self.ui is not None:
@@ -242,6 +338,10 @@ class App:
             return
         self._shut = True
         try:
+            if self.panel_window is not None:
+                self.panel_window.close()
+            if self.panel_server is not None:
+                self.panel_server.stop()
             if self.tray is not None:
                 self.tray.remove()
             if self.pill is not None:
@@ -256,7 +356,8 @@ class App:
 
         log.info("LocalFlow %s для Windows запускается", __version__)
         self.ui = ui.UiLoop()
-        self.pill = overlay.PillWindow(self.ui, self.cfg.get("pill_animation"))
+        self._ui_thread = threading.get_ident()
+        self.pill = overlay.PillWindow(self.ui, self.pill_animation)
         self.dictation.indicator = self.pill
         self.tray = tray.Tray(self.ui, lambda: menu.build(self))
         self.tray.add(menu.tray_state(self), menu.tooltip(self))

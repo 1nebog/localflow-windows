@@ -247,3 +247,96 @@ def test_app_runs_with_tray_and_quits():
             break
         time.sleep(0.05)
     assert not a.hook._hook
+
+
+# --- Панель настроек ---------------------------------------------------------------
+
+def test_capture_works_while_paused():
+    """Пауза пропускает клавиши в программы, но назначение клавиши работает."""
+    import threading
+
+    logic = KeyboardLogic(is_down=keyhook.is_key_down)
+    h = keyhook.KeyHook(logic, lambda ev: None, accept_injected=True)
+    assert h.start(), h.error
+    try:
+        h.paused = True
+        got = []
+        done = threading.Event()
+        logic.capture(lambda chord: (got.append(chord), done.set()))
+        VK_F9 = 0x78
+        paste._send([paste._key(VK_F9)])
+        paste._send([paste._key(VK_F9, flags=paste.KEYEVENTF_KEYUP)])
+        assert done.wait(3)
+        assert got == [(VK_F9,)]
+    finally:
+        h.stop()
+
+
+def test_autostart_roundtrip(monkeypatch):
+    import winreg
+
+    from localflow.win import autostart
+
+    monkeypatch.setattr(autostart, "NAME", "LocalFlow-test")   # настоящую строку не трогаем
+    try:
+        assert autostart.set_enabled(True) and autostart.is_enabled()
+        cmd = autostart._read(autostart.RUN_KEY, "LocalFlow-test")
+        assert "localflow.app" in cmd and "pythonw" in cmd.lower()
+        # выключили в Диспетчере задач
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, autostart.APPROVED_KEY) as key:
+            winreg.SetValueEx(key, "LocalFlow-test", 0, winreg.REG_BINARY, b"\x03" + bytes(11))
+        assert not autostart.is_enabled()
+        assert autostart.set_enabled(True) and autostart.is_enabled()
+        assert autostart.set_enabled(False) and not autostart.is_enabled()
+    finally:
+        autostart.set_enabled(False)
+
+
+def test_panel_data_from_real_app():
+    import json
+
+    from localflow import app, panel
+
+    a = app.App()
+    data = json.loads(json.dumps(panel.snapshot(a), ensure_ascii=False))
+    assert data["settings"]["hotkey"] and data["options"]["mic"][0][0] == ""
+    assert panel.apply(a, "pill_animation", "orbit") and a.pill_animation == "orbit"
+    assert panel.apply(a, "sounds", True)
+
+
+def test_panel_window_opens_and_closes(tmp_path):
+    from localflow import app, panel
+    from localflow.win import panel_window
+
+    if panel_window.find_edge() is None:
+        pytest.skip("на этой машине нет Edge")
+    a = app.App()
+    srv = panel.PanelServer(a)
+    assert srv.start()
+    win = panel_window.PanelWindow(tmp_path / "profile")
+    try:
+        win.open(srv.url + "#settings")
+        win.open(srv.url + "#settings")       # второй щелчок не открывает второе окно
+        title = ""
+        for _ in range(160):
+            wins = win.windows()
+            if wins:
+                buf = ctypes.create_unicode_buffer(256)
+                user32.GetWindowTextW(wins[0], buf, 256)
+                title = buf.value
+                if title == "LocalFlow":
+                    break
+            time.sleep(0.25)
+        assert title == "LocalFlow"             # страница загрузилась с ключом
+        assert len(win.windows()) == 1
+        win.open(srv.url + "#settings")       # уже открыто — просто на передний план
+        assert len(win.windows()) == 1
+        win.close()
+        for _ in range(40):
+            if not win.windows():
+                break
+            time.sleep(0.25)
+        assert not win.windows()
+    finally:
+        win.close()
+        srv.stop()

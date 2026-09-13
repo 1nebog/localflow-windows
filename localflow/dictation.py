@@ -383,6 +383,8 @@ class Dictation:
         item = {"ts": time.time(), "text": text}
         if raw is not None and raw != text:
             item["raw"] = raw
+        if self._active_app:
+            item["app"] = self._active_app      # подсказка имени в профилях программ
         self.history.insert(0, item)
         self.history[:] = prune_history(self.history)
         save_history(self.history)

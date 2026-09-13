@@ -132,6 +132,7 @@ def build(app) -> list:
     pastes = [("clipboard", tr("paste_fast")), ("type", tr("paste_type"))]
     return [
         Item(status_text(app), enabled=False),
+        Item(tr("menu_settings"), app.open_panel),
         None,
         Item(tr("model"), children=_model_items(app)),
         Item(tr("language"), children=_radio(langs, app.transcriber.language, app.set_language)),

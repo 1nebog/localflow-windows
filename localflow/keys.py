@@ -139,6 +139,10 @@ class KeyboardLogic:
     def hotkey_held(self) -> bool:
         return self._active
 
+    @property
+    def capturing(self) -> bool:
+        return self._capture is not None
+
     def set_hotkey(self, chord) -> None:
         with self._lock:
             self.hotkey = normalize(chord)

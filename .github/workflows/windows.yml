@@ -38,8 +38,12 @@ jobs:
       - name: Снимок таблетки и нагрузка на процессор
         run: python tools/pill_snapshot.py build/pill.png
 
+      - name: Снимок окна панели
+        run: python tools/panel_snapshot.py build/panel.png
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: pill-snapshot
-          path: build/pill.png
+          path: build/*.png
           retention-days: 14
