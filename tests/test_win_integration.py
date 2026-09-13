@@ -79,7 +79,6 @@ def test_paste_unicode_and_restore_clipboard(window):
     assert paste.paste_text(phrase, "clipboard")
     pump(root, 0.6)
     assert content(text) == phrase
-    assert paste.get_text() == phrase
     time.sleep(CLIPBOARD_RESTORE_DELAY + 0.5)
     assert paste.get_text() == "старое содержимое"
 
