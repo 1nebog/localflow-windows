@@ -1,0 +1,17 @@
+.DS_Store
+Thumbs.db
+.git.nosync/
+.venv
+.venv.nosync/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+*.spec.bak
+# Модели и движки качаются при первом запуске, в репозиторий не кладём
+models/
+engines/
+*.gguf
+*.bin
+.env
