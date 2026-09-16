@@ -4,9 +4,6 @@
 появился там, где стоит курсор. Работает без интернета: речь не уходит
 никуда с компьютера.
 
-> **Первая версия готовится.** Когда установщик появится на странице
-> [Releases](https://github.com/1nebog/localflow-windows/releases), инструкция ниже заработает.
-
 ## Установка
 
 1. Скачай `LocalFlow-Setup-….exe` со страницы
@@ -44,9 +41,6 @@
 Voice dictation into any window. Hold a key, speak, release — the text
 appears where your cursor is. Works offline: your voice never leaves your
 computer.
-
-> **First version coming soon.** Once the installer is on the
-> [Releases](https://github.com/1nebog/localflow-windows/releases) page, the steps below apply.
 
 ## Install
 
