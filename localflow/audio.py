@@ -127,6 +127,13 @@ def refresh_devices() -> None:
 class AudioRecorder:
     """Пишет микрофон в память через callback."""
 
+    QUIET_PEAK = 0.05        # громче — микрофон нормальный, не трогаем
+    GAIN_TARGET_PEAK = 0.25  # к такому пику тянем тихий голос
+    GAIN_MAX = 12.0
+    GAIN_NOISE_RMS = 0.004   # фон после усиления не громче этого
+    PEAK_HALF_LIFE = 1.0     # секунд, за которые пик «забывается» вдвое
+    GAIN_DOUBLE_SEC = 0.2    # усиление растёт вдвое не быстрее, чем за столько
+
     def __init__(self, stream_factory=None):
         self._factory = stream_factory or _default_stream_factory
         self.device = None            # имя микрофона из настроек, None — системный
@@ -138,6 +145,10 @@ class AudioRecorder:
         self._rate = SAMPLE_RATE      # на какой частоте реально пишем
         self._channels = CHANNELS
         self.level = 0.0  # текущая громкость (RMS) для индикатора
+        self.gain = 1.0   # усиление тихого микрофона, помним между записями
+        self._peak_hold = 0.0
+        self._noise = None
+        self._gain_logged = False
         # Прогрев и настоящий старт не должны открывать микрофон одновременно
         self._open_lock = threading.Lock()
 
@@ -145,10 +156,38 @@ class AudioRecorder:
     def is_recording(self) -> bool:
         return self._recording
 
+    def _amplify(self, mono: np.ndarray) -> np.ndarray:
+        """Тихий микрофон (частая история у ноутбуков) подтягиваем до обычной
+        громкости: иначе голос не отличить от тишины и ничего не распознаётся.
+        Фон при этом не раздуваем — на шипении Whisper выдумывает слова."""
+        if not len(mono):
+            return mono
+        peak = float(np.max(np.abs(mono)))
+        rms = float(np.sqrt(np.mean(mono ** 2)))
+        sec = len(mono) / self._rate
+        self._peak_hold = max(peak, self._peak_hold * 0.5 ** (sec / self.PEAK_HALF_LIFE))
+        self._noise = rms if self._noise is None or rms < self._noise else (
+            self._noise + (rms - self._noise) * 0.003)
+        if self._peak_hold >= self.QUIET_PEAK:
+            want = 1.0
+        else:
+            want = min(self.GAIN_MAX, self.GAIN_TARGET_PEAK / max(self._peak_hold, 1e-6),
+                       self.GAIN_NOISE_RMS / max(self._noise, 1e-6))
+            want = max(1.0, want)
+        # вниз — сразу (не перегрузить), вверх — плавно
+        self.gain = want if want < self.gain else min(want, self.gain * 2 ** (sec / self.GAIN_DOUBLE_SEC))
+        if self.gain > 1.0 and not self._gain_logged:
+            self._gain_logged = True
+            log.info("Тихий микрофон (пик %.4f, фон %.4f) — усиливаю", peak, rms)
+        if self.gain == 1.0:
+            return mono
+        return np.clip(mono * self.gain, -1.0, 1.0)
+
     def _callback(self, indata, frames, time_info, status):
         if status:
             log.warning("Аудио-статус: %s", status)
         mono = indata if indata.ndim == 1 or indata.shape[1] == 1 else indata.mean(axis=1, keepdims=True)
+        mono = self._amplify(mono)
         self.level = float(np.sqrt(np.mean(mono ** 2)))
         with self._lock:
             if self._recording:
@@ -220,6 +259,7 @@ class AudioRecorder:
         with self._lock:
             self._chunks = []
             self._recording = True
+            self._gain_logged = False
         try:
             with self._open_lock:
                 self._stream = self._open(self._callback)
@@ -263,6 +303,6 @@ class AudioRecorder:
             except Exception as exc:
                 log.warning("Микрофон закрылся с ошибкой: %s", exc)
             self._stream = None
-        log.info("Запись остановлена, длительность ~%.2f c",
-                 time.monotonic() - self._started_at)
+        log.info("Запись остановлена, длительность ~%.2f c, усиление ×%.1f",
+                 time.monotonic() - self._started_at, self.gain)
         return self._join(chunks)

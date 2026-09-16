@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import core, icons, menu
+from . import __version__, core, icons, menu, updates
 from .core import MODEL_LABELS, PILL_ANIMATIONS, STYLES, TRANSLATE_TARGETS, lang_label, tr
 from .engine.catalog import WHISPER_MODELS
 from .engine.download import is_ready
@@ -59,6 +59,7 @@ PANEL_STRINGS = {
         "hint_dict": "Как слышится → как надо писать. Меняется на лету.",
         "hint_snip": "Скажи фразу целиком — вставится текст.",
         "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "замена",
+        "set_updates": "Обновления", "upd_check": "Проверить", "upd_checking": "Проверяю…", "upd_version": "Версия {v}", "upd_latest": "Последняя версия ✓", "upd_available": "Есть версия {v}", "upd_get": "Скачать", "upd_error": "Не удалось проверить — нет интернета?",
         "add": "+ Добавить", "offline": "LocalFlow не запущен", "locale": "ru-RU",
     },
     "en": {
@@ -89,6 +90,7 @@ PANEL_STRINGS = {
         "hint_dict": "As heard → as it should be written. Applies instantly.",
         "hint_snip": "Say the whole phrase — the text is inserted.",
         "ph_trigger": "phrase", "ph_text": "text", "ph_repl": "replacement",
+        "set_updates": "Updates", "upd_check": "Check", "upd_checking": "Checking…", "upd_version": "Version {v}", "upd_latest": "Up to date ✓", "upd_available": "Version {v} is out", "upd_get": "Download", "upd_error": "Couldn't check — no internet?",
         "add": "+ Add", "offline": "LocalFlow isn't running", "locale": "en-US",
     },
     "uk": {
@@ -119,6 +121,7 @@ PANEL_STRINGS = {
         "hint_dict": "Як чується → як треба писати. Застосовується одразу.",
         "hint_snip": "Скажи фразу цілком — вставиться текст.",
         "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "заміна",
+        "set_updates": "Оновлення", "upd_check": "Перевірити", "upd_checking": "Перевіряю…", "upd_version": "Версія {v}", "upd_latest": "Остання версія ✓", "upd_available": "Є версія {v}", "upd_get": "Завантажити", "upd_error": "Не вдалося перевірити — немає інтернету?",
         "add": "+ Додати", "offline": "LocalFlow не запущено", "locale": "uk-UA",
     },
     "de": {
@@ -149,6 +152,7 @@ PANEL_STRINGS = {
         "hint_dict": "Wie gehört → wie es geschrieben werden soll. Gilt sofort.",
         "hint_snip": "Sag die ganze Phrase — der Text wird eingefügt.",
         "ph_trigger": "Phrase", "ph_text": "Text", "ph_repl": "Ersetzung",
+        "set_updates": "Updates", "upd_check": "Prüfen", "upd_checking": "Prüfe…", "upd_version": "Version {v}", "upd_latest": "Aktuell ✓", "upd_available": "Version {v} ist da", "upd_get": "Herunterladen", "upd_error": "Prüfen fehlgeschlagen — kein Internet?",
         "add": "+ Hinzufügen", "offline": "LocalFlow läuft nicht", "locale": "de-DE",
     },
 }
@@ -233,6 +237,7 @@ def snapshot(app, mics: list[dict] | None = None) -> dict:
         "dict": core.read_pairs(core.DICTIONARY_PATH),
         "snippets": core.read_pairs(core.SNIPPETS_PATH),
         "stats": core.stats_summary(),
+        "version": __version__,
     }
 
 
@@ -398,6 +403,7 @@ class PanelServer:
         # Настройки меняются в потоке окон — там же, где меню трея
         self.call = call or (lambda fn: fn())
         self.capture = HotkeyCapture(app, self.call)
+        self.check_updates = updates.check
         self.port: int | None = None
         self._srv = None
 
@@ -481,6 +487,12 @@ class PanelServer:
         if path == "/api/history/delete":
             ts = body.get("ts")
             self.call(lambda: app.delete_history(ts))
+            return {"ok": True}
+        if path == "/api/update/check":
+            return self.check_updates()          # сеть — не в потоке окон
+        if path == "/api/update/open":
+            url = updates.safe_url(body.get("url"))
+            self.call(lambda: app.open_url(url))
             return {"ok": True}
         if path == "/api/history/clear":
             self.call(app.clear_history)
@@ -874,6 +886,9 @@ function renderSettings(){
     `</div><div class="sec-title">${L.sec_app}</div><div class="group">`+
     row(L.set_autostart,sw('autostart'))+row(L.set_sounds,sw('sounds'))+row(L.set_media,sw('pause_media'))+
     row(L.set_anim,pick('pill_animation'))+row(L.set_uilang,pick('ui_lang'))+
+    `<div class="set-row"><span class="name">${L.set_updates}<div class="note" id="updNote">${esc(L.upd_version.replace('{v}',DATA.version))}</div></span>
+      <button class="btn" id="updGet" hidden>${L.upd_get}</button>
+      <button class="btn ghost" id="updBtn">${L.upd_check}</button></div>`+
     `</div><div class="sec-title">${L.set_profiles}</div><div class="hint">${L.prof_hint}</div>
      <div id="profiles"></div><button class="btn ghost" id="addProf">${L.add}</button>`;
 
@@ -901,6 +916,21 @@ function renderSettings(){
       if(!r.ok)s.checked=!s.checked; else st[key]=s.checked;}
     catch(e){s.checked=!s.checked;}
   });
+
+  /* обновления: только по кнопке */
+  let updUrl='';
+  $('#updBtn').onclick=async()=>{
+    const b=$('#updBtn'), n=$('#updNote');
+    b.disabled=true;b.textContent=L.upd_checking;$('#updGet').hidden=true;n.className='note';
+    try{const r=await api('/api/update/check',{});
+      if(r.state==='available'){n.textContent=L.upd_available.replace('{v}',r.latest);
+        updUrl=r.url;$('#updGet').hidden=false;}
+      else if(r.state==='latest')n.textContent=L.upd_latest;
+      else{n.textContent=L.upd_error;n.className='note err';}}
+    catch(e){n.textContent=L.upd_error;n.className='note err';}
+    b.disabled=false;b.textContent=L.upd_check;
+  };
+  $('#updGet').onclick=()=>api('/api/update/open',{url:updUrl});
 
   /* клавиша диктовки */
   const note=(t,err)=>{$('#hkNote').textContent=t||'';$('#hkNote').className='note'+(err?' err':'');};

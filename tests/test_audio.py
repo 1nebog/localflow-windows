@@ -71,6 +71,60 @@ def test_recorder_collects_chunks_and_tail():
     assert len(audio) == 16000 and not rec.is_recording and streams[-1].closed
 
 
+def speech_like(amp, sec=0.1, rate=16000, noise=0.0002, seed=0):
+    rng = np.random.default_rng(seed)
+    x = tone(220, rate, sec, amp) + rng.normal(0, noise, int(rate * sec)).astype(np.float32)
+    return x.reshape(-1, 1)
+
+
+def test_quiet_laptop_microphone_is_amplified_to_speech_level():
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    rec.start()
+    for i in range(20):              # 2 c тихой речи с паузами между словами
+        rec._callback(speech_like(0.012 if i % 3 else 0.0, seed=i), 1600, None, None)
+    assert rec.gain > 8
+    audio = rec.stop()
+    assert np.abs(audio[-1600:]).max() > 0.1   # теперь громче порога тишины
+    rec.start()
+    rec._callback(speech_like(0.012), 1600, None, None)
+    assert rec.level > 0.02                    # следующая запись — сразу громко
+
+
+def test_normal_microphone_is_not_touched():
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    rec.start()
+    for i in range(20):
+        rec._callback(speech_like(0.4, seed=i), 1600, None, None)
+    assert rec.gain == 1.0
+
+
+def test_background_hiss_is_not_blown_up_into_speech():
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    rec.start()
+    rng = np.random.default_rng(1)
+    for _ in range(30):                        # шум без голоса, фон 0.002
+        rec._callback(rng.normal(0, 0.002, (1600, 1)).astype(np.float32), 1600, None, None)
+    audio = rec.stop()
+    assert np.sqrt(np.mean(audio[-8000:] ** 2)) <= 0.0045
+
+
+def test_loud_word_after_quiet_start_is_not_clipped_for_long():
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    rec.start()
+    for i in range(10):
+        rec._callback(speech_like(0.01, seed=i), 1600, None, None)
+    rec._callback(speech_like(0.5), 1600, None, None)
+    assert rec.gain == 1.0
+
+
+def test_windows_blocked_microphone_stays_zero():
+    rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
+    rec.start()
+    for _ in range(10):
+        rec._callback(np.zeros((1600, 1), np.float32), 1600, None, None)
+    assert np.max(np.abs(rec.stop())) == 0.0     # не маскируем запрет доступа
+
+
 def test_stereo_is_mixed_to_mono():
     rec = AudioRecorder(stream_factory=lambda **kw: FakeStream(**kw))
     rec.start()

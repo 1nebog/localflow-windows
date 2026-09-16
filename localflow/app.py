@@ -334,6 +334,13 @@ class App:
             raise box["error"]
         return box.get("value")
 
+    def open_url(self, url: str) -> None:
+        """Ссылка — в обычном браузере человека."""
+        try:
+            os.startfile(url)
+        except Exception as exc:
+            log.warning("Не открылась ссылка %s: %s", url, exc)
+
     def open_panel(self) -> None:
         from .win import panel_window
 

@@ -53,6 +53,7 @@ def make_app(tmp_path):
                                  downloaded=lambda mode: False),
         media=SimpleNamespace(enabled=True),
         set_llm_mode=calls.set_llm_mode, set_media_pause=calls.set_media_pause,
+        open_url=calls.open_url,
     )
     return app, calls
 
@@ -314,3 +315,17 @@ def test_mic_list_endpoint_and_any_mic_name(server):
     assert calls[-1] == ("set_mic", "Отключённый")
     app.recorder.device = "Отключённый"
     assert panel.mic_options(app, [])[-1] == ["Отключённый", "Отключённый"]
+
+
+def test_update_check_by_button(server):
+    srv, _, calls = server
+    exe = "https://github.com/1nebog/localflow-windows/releases/download/v9.0.0/LocalFlow-Setup-9.0.0.exe"
+    srv.check_updates = lambda: {"state": "available", "latest": "9.0.0", "url": exe}
+    code, body = request(srv, "/api/update/check", {})
+    assert code == 200 and json.loads(body)["url"] == exe
+    request(srv, "/api/update/open", {"url": exe})
+    request(srv, "/api/update/open", {"url": "https://evil.example/x.exe"})
+    assert calls == [("open_url", exe),
+                     ("open_url", "https://github.com/1nebog/localflow-windows/releases/latest")]
+    assert request(srv, "/api/update/check", {}, key=False)[0] == 403
+    assert json.loads(request(srv, "/api/all")[1])["version"]
