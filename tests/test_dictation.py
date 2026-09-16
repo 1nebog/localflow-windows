@@ -31,6 +31,17 @@ class FakeRecorder:
         self._rec = False
         self.fail = False
         self.starts = 0
+        self.other_apis = 0          # сколько ещё подсистем можно попробовать
+
+    @property
+    def raw_peak(self):
+        return float(np.max(np.abs(self.audio))) if len(self.audio) else 0.0
+
+    def switch_api(self):
+        if not self.other_apis:
+            return False
+        self.other_apis -= 1
+        return True
 
     @property
     def is_recording(self):
@@ -215,6 +226,16 @@ def test_blocked_microphone_gives_exact_zeros(d):
     hold(d)
     assert d.notes and d.notes[-1][0] == "Микрофон недоступен"
     assert "Конфиденциальность" in d.notes[-1][1]
+
+
+def test_near_silent_microphone_tries_another_subsystem_first(d):
+    # Не ровный ноль, а крошечный шум — так было на ноутбуке с Realtek
+    d.recorder.audio = np.random.default_rng(0).uniform(-3e-5, 3e-5, SR * 2).astype(np.float32)
+    d.recorder.other_apis = 1
+    hold(d)
+    assert d.notes == [] and d.recorder.other_apis == 0 and d.transcriber.calls == 0
+    hold(d)                                     # и там пусто — тогда подсказка
+    assert d.notes[-1][0] == "Микрофон недоступен"
 
 
 def test_too_short_recording_ignored(d):

@@ -152,3 +152,14 @@ def test_menu_auto_turns_autotune_back_on(tmp_path):
     at, tr, cfg = make(tmp_path, cfg={"model_auto": False, "gpu_checked": True})
     at.choose(None).join(120)
     assert cfg["model_auto"] is True and tr.model_name == "large-v3-turbo"
+
+
+def test_unfair_gpu_verdict_from_old_versions_is_rechecked():
+    from localflow.app import migrate_gpu_check
+    cfg = {"gpu_checked": True, "use_gpu": False, "llm_gpu": False}
+    assert migrate_gpu_check(cfg)
+    assert cfg["use_gpu"] is True and not cfg["gpu_checked"] and "llm_gpu" not in cfg
+    assert not migrate_gpu_check(cfg)            # один раз
+    crashed = {"gpu_checked": True, "use_gpu": False, "gpu_crashed": True}
+    migrate_gpu_check(crashed)
+    assert crashed["use_gpu"] is False           # падение движка — не пересматриваем

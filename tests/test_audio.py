@@ -246,3 +246,44 @@ def test_device_list_refreshes_only_when_microphone_is_closed(fake_sd):
     assert fake_sd.restarts == 1                   # во время записи не трогаем
     rec.stop()
     assert [m["name"] for m in rec.input_devices()][-1] == "USB Mic" and fake_sd.restarts == 2
+
+
+def test_silent_subsystem_is_swapped_for_wasapi(fake_sd):
+    streams = []
+
+    def factory(**kw):
+        s = FakeStream(**kw)
+        streams.append(s)
+        return s
+
+    rec = AudioRecorder(stream_factory=factory)
+    saved = []
+    rec.on_avoid_change = saved.append
+    rec.device = REALTEK
+    rec.start()
+    rec._callback(np.full((1600, 1), 2e-5, np.float32), 1600, None, None)
+    rec.stop()
+    assert streams[-1].kw["device"] == 1 and rec.raw_peak < audio.DEAD_PEAK
+    assert rec.gain == 1.0                       # пустоту не усиливаем
+    assert rec.switch_api() and saved == [["MME"]]
+    rec.start()
+    rec.stop()
+    assert streams[-1].kw["device"] == 7         # тот же Realtek, но через WASAPI
+    assert rec.switch_api() and saved[-1] == ["MME", "Windows WASAPI"]
+    rec.start()
+    rec.stop()
+    assert streams[-1].kw["device"] == 5         # DirectSound
+    assert not rec.switch_api()                  # больше пробовать негде
+
+
+def test_silent_system_microphone_and_truncated_name(fake_sd):
+    streams = []
+    rec = AudioRecorder(stream_factory=lambda **kw: streams.append(FakeStream(**kw)) or streams[-1])
+    rec.avoid_apis = {"MME"}
+    rec.start()
+    rec.stop()
+    assert streams[-1].kw["device"] == 7         # системный микрофон WASAPI
+    rec.device = ARRAY[:31]
+    rec.start()
+    rec.stop()
+    assert streams[-1].kw["device"] == 8         # полное имя в WASAPI

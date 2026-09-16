@@ -109,6 +109,24 @@ def send_command(name: str, wait_exit: float = 0.0) -> bool:
     return True
 
 
+GPU_CHECK_VERSION = 2
+
+
+def migrate_gpu_check(cfg: dict) -> bool:
+    """В 0.1.0–0.1.1 видеокарту сравнивали по первому прогону, в который
+    входит и подготовка видеокарты, — и зря отказывались от неё. Такой
+    замер проводим заново. Отказ после падения движка не трогаем."""
+    if cfg.get("gpu_check_version", 1) >= GPU_CHECK_VERSION:
+        return False
+    cfg["gpu_check_version"] = GPU_CHECK_VERSION
+    if cfg.get("gpu_checked") and cfg.get("use_gpu") is False and not cfg.get("gpu_crashed"):
+        cfg["gpu_checked"] = False
+        cfg["use_gpu"] = True
+        cfg.pop("llm_gpu", None)
+        log.info("Видеокарту проверю заново: прошлый замер был нечестным")
+    return True
+
+
 class App:
     def __init__(self):
         from .win import keyhook, media, paste, system
@@ -124,6 +142,8 @@ class App:
         self.transcriber.language = (self.cfg.get("language")
                                      if self.cfg.get("language") in core.LANGUAGES
                                      else core.DEFAULT_LANGUAGE)
+        if migrate_gpu_check(self.cfg):
+            core.save_config(self.cfg)
         self.transcriber.use_gpu = bool(self.cfg.get("use_gpu", True))
         self.transcriber.on_gpu_disabled = self._gpu_disabled
 
@@ -136,6 +156,8 @@ class App:
 
         self.recorder = AudioRecorder()
         self.recorder.device = self.cfg.get("mic_device") or None
+        self.recorder.avoid_apis = {a for a in self.cfg.get("mic_avoid_apis", []) if isinstance(a, str)}
+        self.recorder.on_avoid_change = lambda apis: self._set("mic_avoid_apis", apis)
 
         self.keys = KeyboardLogic(chord_from_config(self.cfg.get("hotkey")),
                                   is_down=keyhook.is_key_down)
@@ -199,6 +221,7 @@ class App:
 
     def _gpu_disabled(self) -> None:
         self.cfg["use_gpu"] = False
+        self.cfg["gpu_crashed"] = True
         core.save_config(self.cfg)
 
     def _load_model(self) -> None:
@@ -281,7 +304,13 @@ class App:
         # Видеокарта — как решил замер распознавания: встроенная графика,
         # которая медленнее процессора там, медленнее и здесь
         self.polisher.use_gpu = bool(self.cfg.get("llm_gpu", self.cfg.get("use_gpu", True)))
-        self.polisher.set_mode(mode, on_done=on_done)
+        def done(ok):
+            # модель только что загрузилась (бывает, после долгого скачивания) —
+            # счётчик простоя с нуля, иначе её тут же выгрузит
+            self.dictation.touch()
+            if on_done:
+                on_done(ok)
+        self.polisher.set_mode(mode, on_done=done)
 
     def set_paste(self, method: str) -> None:
         self.dictation.paste_method = method

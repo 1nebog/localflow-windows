@@ -102,8 +102,9 @@ class Transcriber:
         self._server.inference(wav, self._fields("ru"))
         took = time.monotonic() - t0
         # На видеокарте первый прогон ещё и собирает вычислительные программы
-        # под неё — замеряем второй. На процессоре первый и так честный.
-        if self.use_gpu and took < 5.0:
+        # под неё (на GTX 1650 Ti — 6 секунд) — замеряем второй. На процессоре
+        # первый и так честный.
+        if self.use_gpu and took < 120.0:
             t0 = time.monotonic()
             self._server.inference(wav, self._fields("ru"))
             took = min(took, time.monotonic() - t0)

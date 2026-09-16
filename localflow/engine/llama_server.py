@@ -77,6 +77,11 @@ class LlamaServer:
         name = gpu.group(1).strip() if gpu else "GPU"
         return name if m.group(1) == m.group(2) else f"{name} ({m.group(1)}/{m.group(2)})"
 
+    def refresh_device(self) -> str:
+        if self.running:
+            self.device = self._detect_device() or self.device
+        return self.device
+
     def start(self, timeout: float = 300.0) -> None:
         if self.running:
             return

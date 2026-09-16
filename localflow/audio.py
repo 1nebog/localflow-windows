@@ -112,6 +112,44 @@ def find_input_device(name: str | None) -> int | None:
     return None
 
 
+# Пик всей записи ниже этого — звук до программы не дошёл: даже тихий
+# микрофон в тишине шумит громче. Бывает, когда один способ подключения
+# к звуку (звуковая подсистема Windows) отдаёт пустоту, а другой — голос.
+DEAD_PEAK = 0.001
+# Куда пробовать уйти, если микрофон молчит: от самой современной подсистемы
+FALLBACK_APIS = ("Windows WASAPI", "Windows DirectSound")
+
+
+def _api_name(sd, index: int) -> str:
+    return sd.query_hostapis(index)["name"]
+
+
+def alternative_device(sd, device: int | None, avoid: set[str]) -> int | None:
+    """Тот же микрофон в другой звуковой подсистеме. device=None — системный."""
+    devices = sd.query_devices()
+    primary, default = _inputs(sd)
+    cur = default if device is None else device
+    name = devices[cur]["name"] if cur is not None else None
+    system = device is None or cur == default
+    for api_name in FALLBACK_APIS:
+        if api_name in avoid:
+            continue
+        api = next((i for i, a in enumerate(sd.query_hostapis()) if a["name"] == api_name), None)
+        if api is None:
+            continue
+        if system:
+            idx = sd.query_hostapis(api)["default_input_device"]
+            if idx is not None and 0 <= idx < len(devices):
+                return idx
+            continue
+        for i, d in enumerate(devices):
+            # в старой подсистеме название обрезано до 31 буквы
+            if (d["hostapi"] == api and d["max_input_channels"] > 0
+                    and (d["name"] == name or (len(name) >= MME_NAME_LIMIT and d["name"].startswith(name)))):
+                return i
+    return None
+
+
 def refresh_devices() -> None:
     """Звуковая библиотека запоминает устройства при запуске; чтобы увидеть
     подключённый потом микрофон, её надо перезапустить. Только когда ни
@@ -151,6 +189,10 @@ class AudioRecorder:
         self._gain_logged = False
         # Прогрев и настоящий старт не должны открывать микрофон одновременно
         self._open_lock = threading.Lock()
+        self.raw_peak = 0.0            # пик записи до усиления
+        self.avoid_apis: set[str] = set()   # подсистемы, где микрофон молчал
+        self.on_avoid_change = None    # колбэк: сохранить avoid_apis
+        self._api = ""                 # через какую подсистему открыт микрофон
 
     @property
     def is_recording(self) -> bool:
@@ -164,12 +206,14 @@ class AudioRecorder:
             return mono
         peak = float(np.max(np.abs(mono)))
         rms = float(np.sqrt(np.mean(mono ** 2)))
+        if self._recording and peak > self.raw_peak:
+            self.raw_peak = peak
         sec = len(mono) / self._rate
         self._peak_hold = max(peak, self._peak_hold * 0.5 ** (sec / self.PEAK_HALF_LIFE))
         self._noise = rms if self._noise is None or rms < self._noise else (
             self._noise + (rms - self._noise) * 0.003)
-        if self._peak_hold >= self.QUIET_PEAK:
-            want = 1.0
+        if self._peak_hold >= self.QUIET_PEAK or self._peak_hold < DEAD_PEAK:
+            want = 1.0      # громкий — не нужно; пустоту усиливать бесполезно
         else:
             want = min(self.GAIN_MAX, self.GAIN_TARGET_PEAK / max(self._peak_hold, 1e-6),
                        self.GAIN_NOISE_RMS / max(self._noise, 1e-6))
@@ -213,9 +257,17 @@ class AudioRecorder:
             # подключат обратно — снова возьмём его
             log.warning("Микрофон %r не подключён — беру системный", self.device)
         tries = [(SAMPLE_RATE, CHANNELS)]
+        api = ""
         try:
             import sounddevice as sd
+            if self.avoid_apis:
+                info = sd.query_devices(device, "input")
+                if _api_name(sd, info["hostapi"]) in self.avoid_apis:
+                    alt = alternative_device(sd, device, self.avoid_apis)
+                    if alt is not None:
+                        device = alt
             info = sd.query_devices(device, "input")
+            api = _api_name(sd, info["hostapi"])
             native = int(info["default_samplerate"])
             tries += [(native, CHANNELS), (native, max(1, min(2, info["max_input_channels"])))]
         except Exception:
@@ -228,7 +280,7 @@ class AudioRecorder:
                 stream.start()
                 if (rate, ch) != (SAMPLE_RATE, CHANNELS):
                     log.info("Микрофон пишет %d Гц, %d кан. — переведу в 16 кГц", rate, ch)
-                self._rate, self._channels = rate, ch
+                self._rate, self._channels, self._api = rate, ch, api
                 return stream
             except Exception as exc:
                 last = exc
@@ -237,6 +289,26 @@ class AudioRecorder:
             log.warning("Микрофон %r не открылся (%s) — беру системный", self.device, last)
             return self._open(callback, system=True)
         raise last
+
+    def switch_api(self) -> bool:
+        """Микрофон молчал — в следующий раз открыть его через другую
+        подсистему. False — пробовать больше негде."""
+        if not self._api:
+            return False
+        try:
+            import sounddevice as sd
+            device = find_input_device(self.device)
+            avoid = self.avoid_apis | {self._api}
+            if alternative_device(sd, device, avoid) is None:
+                return False
+        except Exception as exc:
+            log.warning("Другой способ открыть микрофон не нашёлся: %s", exc)
+            return False
+        log.warning("Микрофон молчит через %s — попробую другую подсистему", self._api)
+        self.avoid_apis = avoid
+        if self.on_avoid_change:
+            self.on_avoid_change(sorted(avoid))
+        return True
 
     def warm_up(self) -> None:
         """Открыть и сразу закрыть микрофон, чтобы звуковая система проснулась:
@@ -260,6 +332,7 @@ class AudioRecorder:
             self._chunks = []
             self._recording = True
             self._gain_logged = False
+            self.raw_peak = 0.0
         try:
             with self._open_lock:
                 self._stream = self._open(self._callback)
@@ -268,8 +341,8 @@ class AudioRecorder:
                 self._recording = False
             raise
         self._started_at = time.monotonic()
-        log.info("Запись началась (микрофон открылся за %.2f c)",
-                 self._started_at - t_open)
+        log.info("Запись началась (микрофон открылся за %.2f c, %s, %d Гц)",
+                 self._started_at - t_open, self._api or "?", self._rate)
 
     def _join(self, chunks) -> np.ndarray:
         if not chunks:
@@ -303,6 +376,6 @@ class AudioRecorder:
             except Exception as exc:
                 log.warning("Микрофон закрылся с ошибкой: %s", exc)
             self._stream = None
-        log.info("Запись остановлена, длительность ~%.2f c, усиление ×%.1f",
-                 time.monotonic() - self._started_at, self.gain)
+        log.info("Запись остановлена, длительность ~%.2f c, пик %.5f, усиление ×%.1f",
+                 time.monotonic() - self._started_at, self.raw_peak, self.gain)
         return self._join(chunks)

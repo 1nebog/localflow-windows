@@ -29,6 +29,7 @@ from collections import deque
 import numpy as np
 
 from . import core, strings
+from .audio import DEAD_PEAK
 from .core import (
     LANG_NAMES, MIN_DURATION_SEC, SAMPLE_RATE, SILENCE_PEAK_LEVEL, add_stats,
     casual_tone, clear_recovery, email_tone, extract_rewrite_cmd, extract_translate_cmd,
@@ -336,13 +337,18 @@ class Dictation:
             log.info("Запись слишком короткая (%.2f c) — игнорирую", duration)
             self.indicator.hide()
             return
-        if peak == 0.0:
-            # Не тишина, а ровный ноль: так Windows отдаёт звук, когда доступ
-            # к микрофону выключен в параметрах конфиденциальности
-            log.warning("В записи ни одного звука — микрофон, похоже, запрещён")
-            self.indicator.show_text(tr("mic_blocked"), glow="red")
+        raw_peak = getattr(self.recorder, "raw_peak", peak)
+        if raw_peak < DEAD_PEAK:
+            # Не тишина, а пустота: даже тихий микрофон в тишине шумит громче.
+            # Так бывает, когда доступ к микрофону выключен в Windows или
+            # звук не отдаёт одна из звуковых подсистем — тогда пробуем другую
+            log.warning("В записи нет звука (пик %.5f) — микрофон молчит", raw_peak)
+            if self.recorder.switch_api():
+                self.indicator.show_text(tr("mic_retry"), glow="red")
+            else:
+                self.indicator.show_text(tr("mic_blocked"), glow="red")
+                self._notify(tr("mic_title"), tr("mic_blocked_msg"))
             self.indicator.hide(after=2.5)
-            self._notify(tr("mic_title"), tr("mic_blocked_msg"))
             return
         voiced = np.where(np.abs(audio) > self.SILENCE_PEAK)[0]
         if voiced.size == 0:
@@ -596,6 +602,10 @@ class Dictation:
             log.error("Восстановление записи не удалось: %s", exc)
         finally:
             clear_recovery()
+
+    def touch(self) -> None:
+        """Считать, что программой только что пользовались."""
+        self._last_use_t = time.monotonic()
 
     def maybe_unload_idle(self) -> bool:
         """Долго не диктовали — выгружаем модель, память возвращается системе."""

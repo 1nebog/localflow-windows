@@ -194,7 +194,11 @@ class TextPolisher:
                     return
                 self._server.chat(self._prefix_messages(TASK_POLISH)
                                   + [{"role": "user", "content": "Ы"}], max_tokens=1)
-            log.info("Промпт исправления прогрет за %.1f c", time.monotonic() - t0)
+                # журнал движка дописывается с задержкой — к этому моменту
+                # в нём уже видно, сколько слоёв ушло на видеокарту
+                refresh = getattr(self._server, "refresh_device", None)
+                device = refresh() if refresh else self.device
+            log.info("Промпт исправления прогрет за %.1f c (%s)", time.monotonic() - t0, device)
         except Exception as exc:
             log.warning("Промпт исправления не прогрелся (работаем без этого): %s", exc)
 
