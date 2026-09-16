@@ -59,7 +59,7 @@ PANEL_STRINGS = {
         "hint_dict": "Как слышится → как надо писать. Меняется на лету.",
         "hint_snip": "Скажи фразу целиком — вставится текст.",
         "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "замена",
-        "set_updates": "Обновления", "upd_check": "Проверить", "upd_checking": "Проверяю…", "upd_version": "Версия {v}", "upd_latest": "Последняя версия ✓", "upd_available": "Есть версия {v}", "upd_get": "Скачать", "upd_error": "Не удалось проверить — нет интернета?",
+        "set_updates": "Обновления", "upd_check": "Проверить", "upd_checking": "Проверяю…", "upd_version": "Версия {v}", "upd_latest": "Последняя версия ✓", "upd_available": "Есть версия {v}", "upd_get": "Обновить", "upd_manual": "Скачать вручную", "upd_downloading": "Скачиваю… {p}%", "upd_installing": "Ставлю — LocalFlow сейчас перезапустится", "upd_failed": "Не получилось обновить", "upd_error": "Не удалось проверить — нет интернета?",
         "add": "+ Добавить", "offline": "LocalFlow не запущен", "locale": "ru-RU",
     },
     "en": {
@@ -90,7 +90,7 @@ PANEL_STRINGS = {
         "hint_dict": "As heard → as it should be written. Applies instantly.",
         "hint_snip": "Say the whole phrase — the text is inserted.",
         "ph_trigger": "phrase", "ph_text": "text", "ph_repl": "replacement",
-        "set_updates": "Updates", "upd_check": "Check", "upd_checking": "Checking…", "upd_version": "Version {v}", "upd_latest": "Up to date ✓", "upd_available": "Version {v} is out", "upd_get": "Download", "upd_error": "Couldn't check — no internet?",
+        "set_updates": "Updates", "upd_check": "Check", "upd_checking": "Checking…", "upd_version": "Version {v}", "upd_latest": "Up to date ✓", "upd_available": "Version {v} is out", "upd_get": "Update", "upd_manual": "Download manually", "upd_downloading": "Downloading… {p}%", "upd_installing": "Installing — LocalFlow will restart", "upd_failed": "Update failed", "upd_error": "Couldn't check — no internet?",
         "add": "+ Add", "offline": "LocalFlow isn't running", "locale": "en-US",
     },
     "uk": {
@@ -121,7 +121,7 @@ PANEL_STRINGS = {
         "hint_dict": "Як чується → як треба писати. Застосовується одразу.",
         "hint_snip": "Скажи фразу цілком — вставиться текст.",
         "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "заміна",
-        "set_updates": "Оновлення", "upd_check": "Перевірити", "upd_checking": "Перевіряю…", "upd_version": "Версія {v}", "upd_latest": "Остання версія ✓", "upd_available": "Є версія {v}", "upd_get": "Завантажити", "upd_error": "Не вдалося перевірити — немає інтернету?",
+        "set_updates": "Оновлення", "upd_check": "Перевірити", "upd_checking": "Перевіряю…", "upd_version": "Версія {v}", "upd_latest": "Остання версія ✓", "upd_available": "Є версія {v}", "upd_get": "Оновити", "upd_manual": "Завантажити вручну", "upd_downloading": "Завантажую… {p}%", "upd_installing": "Встановлюю — LocalFlow зараз перезапуститься", "upd_failed": "Не вдалося оновити", "upd_error": "Не вдалося перевірити — немає інтернету?",
         "add": "+ Додати", "offline": "LocalFlow не запущено", "locale": "uk-UA",
     },
     "de": {
@@ -152,7 +152,7 @@ PANEL_STRINGS = {
         "hint_dict": "Wie gehört → wie es geschrieben werden soll. Gilt sofort.",
         "hint_snip": "Sag die ganze Phrase — der Text wird eingefügt.",
         "ph_trigger": "Phrase", "ph_text": "Text", "ph_repl": "Ersetzung",
-        "set_updates": "Updates", "upd_check": "Prüfen", "upd_checking": "Prüfe…", "upd_version": "Version {v}", "upd_latest": "Aktuell ✓", "upd_available": "Version {v} ist da", "upd_get": "Herunterladen", "upd_error": "Prüfen fehlgeschlagen — kein Internet?",
+        "set_updates": "Updates", "upd_check": "Prüfen", "upd_checking": "Prüfe…", "upd_version": "Version {v}", "upd_latest": "Aktuell ✓", "upd_available": "Version {v} ist da", "upd_get": "Aktualisieren", "upd_manual": "Manuell herunterladen", "upd_downloading": "Lade… {p}%", "upd_installing": "Installiere — LocalFlow startet neu", "upd_failed": "Update fehlgeschlagen", "upd_error": "Prüfen fehlgeschlagen — kein Internet?",
         "add": "+ Hinzufügen", "offline": "LocalFlow läuft nicht", "locale": "de-DE",
     },
 }
@@ -404,6 +404,7 @@ class PanelServer:
         self.call = call or (lambda fn: fn())
         self.capture = HotkeyCapture(app, self.call)
         self.check_updates = updates.check
+        self._update_info = None
         self.port: int | None = None
         self._srv = None
 
@@ -458,6 +459,8 @@ class PanelServer:
             return self.call(_status)
         if path == "/api/hotkey":
             return self.capture.poll()
+        if path == "/api/update/status":
+            return app.updater.status()
         return None
 
     def post(self, path: str, body: dict):
@@ -489,9 +492,13 @@ class PanelServer:
             self.call(lambda: app.delete_history(ts))
             return {"ok": True}
         if path == "/api/update/check":
-            return self.check_updates()          # сеть — не в потоке окон
+            self._update_info = self.check_updates()   # сеть — не в потоке окон
+            return {k: v for k, v in self._update_info.items() if k in ("state", "latest", "current")}
+        if path == "/api/update/install":
+            # ставим только то, что сами нашли при проверке, а не адрес со страницы
+            return {"ok": bool(app.start_update(self._update_info))}
         if path == "/api/update/open":
-            url = updates.safe_url(body.get("url"))
+            url = updates.safe_url((self._update_info or {}).get("url"))
             self.call(lambda: app.open_url(url))
             return {"ok": True}
         if path == "/api/history/clear":
@@ -887,6 +894,7 @@ function renderSettings(){
     row(L.set_autostart,sw('autostart'))+row(L.set_sounds,sw('sounds'))+row(L.set_media,sw('pause_media'))+
     row(L.set_anim,pick('pill_animation'))+row(L.set_uilang,pick('ui_lang'))+
     `<div class="set-row"><span class="name">${L.set_updates}<div class="note" id="updNote">${esc(L.upd_version.replace('{v}',DATA.version))}</div></span>
+      <button class="btn link" id="updManual" hidden>${L.upd_manual}</button>
       <button class="btn" id="updGet" hidden>${L.upd_get}</button>
       <button class="btn ghost" id="updBtn">${L.upd_check}</button></div>`+
     `</div><div class="sec-title">${L.set_profiles}</div><div class="hint">${L.prof_hint}</div>
@@ -918,19 +926,31 @@ function renderSettings(){
   });
 
   /* обновления: только по кнопке */
-  let updUrl='';
+  const updNote=(t,err)=>{$('#updNote').textContent=t;$('#updNote').className='note'+(err?' err':'');};
+  const updFailed=()=>{updNote(L.upd_failed,true);$('#updManual').hidden=false;
+    $('#updGet').hidden=true;$('#updBtn').hidden=false;};
   $('#updBtn').onclick=async()=>{
-    const b=$('#updBtn'), n=$('#updNote');
-    b.disabled=true;b.textContent=L.upd_checking;$('#updGet').hidden=true;n.className='note';
+    const b=$('#updBtn');
+    b.disabled=true;b.textContent=L.upd_checking;$('#updGet').hidden=$('#updManual').hidden=true;updNote('');
     try{const r=await api('/api/update/check',{});
-      if(r.state==='available'){n.textContent=L.upd_available.replace('{v}',r.latest);
-        updUrl=r.url;$('#updGet').hidden=false;}
-      else if(r.state==='latest')n.textContent=L.upd_latest;
-      else{n.textContent=L.upd_error;n.className='note err';}}
-    catch(e){n.textContent=L.upd_error;n.className='note err';}
+      if(r.state==='available'){updNote(L.upd_available.replace('{v}',r.latest));$('#updGet').hidden=false;}
+      else if(r.state==='latest')updNote(L.upd_latest);
+      else updNote(L.upd_error,true);}
+    catch(e){updNote(L.upd_error,true);}
     b.disabled=false;b.textContent=L.upd_check;
   };
-  $('#updGet').onclick=()=>api('/api/update/open',{url:updUrl});
+  $('#updManual').onclick=()=>api('/api/update/open',{});
+  $('#updGet').onclick=async()=>{
+    $('#updGet').hidden=$('#updBtn').hidden=true;updNote(L.upd_downloading.replace('{p}',0));
+    let r;try{r=await api('/api/update/install',{});}catch(e){r={ok:false};}
+    if(!r.ok){updFailed();return;}
+    const t=setInterval(async()=>{
+      let s;try{s=await api('/api/update/status');}catch(e){return;}   /* программа уже закрылась */
+      if(s.state==='downloading')updNote(L.upd_downloading.replace('{p}',s.percent));
+      else if(s.state==='installing')updNote(L.upd_installing);
+      else if(s.state==='error'){clearInterval(t);updFailed();}
+    },500);
+  };
 
   /* клавиша диктовки */
   const note=(t,err)=>{$('#hkNote').textContent=t||'';$('#hkNote').className='note'+(err?' err':'');};

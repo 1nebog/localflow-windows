@@ -74,11 +74,18 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\LocalFlow.exe"; Description: "{cm:LaunchProgram,LocalFlow}"; Flags: nowait postinstall skipifsilent
+; обновление из самой программы: тихая установка и снова запуск
+Filename: "{app}\LocalFlow.exe"; Flags: nowait; Check: Relaunch
 
 [Code]
 const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
   ApprovedKey = 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
+
+function Relaunch(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 
 { Закрыть запущенный LocalFlow: иначе его файлы не заменить и не удалить }
 procedure StopLocalFlow(const Exe: String);

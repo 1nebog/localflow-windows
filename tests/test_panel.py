@@ -54,7 +54,9 @@ def make_app(tmp_path):
         media=SimpleNamespace(enabled=True),
         set_llm_mode=calls.set_llm_mode, set_media_pause=calls.set_media_pause,
         open_url=calls.open_url,
+        updater=SimpleNamespace(status=lambda: {"state": "downloading", "version": "9.0.0", "percent": 0}),
     )
+    app.start_update = lambda info: calls.append(("start_update", info)) or True
     return app, calls
 
 
@@ -317,15 +319,17 @@ def test_mic_list_endpoint_and_any_mic_name(server):
     assert panel.mic_options(app, [])[-1] == ["Отключённый", "Отключённый"]
 
 
-def test_update_check_by_button(server):
-    srv, _, calls = server
+def test_update_by_button_inside_the_app(server):
+    srv, app, calls = server
     exe = "https://github.com/1nebog/localflow-windows/releases/download/v9.0.0/LocalFlow-Setup-9.0.0.exe"
-    srv.check_updates = lambda: {"state": "available", "latest": "9.0.0", "url": exe}
+    info = {"state": "available", "latest": "9.0.0", "url": exe, "sha_url": exe + ".sha256", "size": 9}
+    srv.check_updates = lambda: info
     code, body = request(srv, "/api/update/check", {})
-    assert code == 200 and json.loads(body)["url"] == exe
-    request(srv, "/api/update/open", {"url": exe})
+    assert code == 200 and json.loads(body) == {"state": "available", "latest": "9.0.0"}
+    # ставится найденное при проверке — адрес со страницы не принимается
+    request(srv, "/api/update/install", {"url": "https://evil.example/x.exe"})
+    assert json.loads(request(srv, "/api/update/status")[1])["state"] == "downloading"
     request(srv, "/api/update/open", {"url": "https://evil.example/x.exe"})
-    assert calls == [("open_url", exe),
-                     ("open_url", "https://github.com/1nebog/localflow-windows/releases/latest")]
-    assert request(srv, "/api/update/check", {}, key=False)[0] == 403
+    assert calls == [("start_update", info), ("open_url", exe)]
+    assert request(srv, "/api/update/install", {}, key=False)[0] == 403
     assert json.loads(request(srv, "/api/all")[1])["version"]

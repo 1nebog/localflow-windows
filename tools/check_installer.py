@@ -72,6 +72,66 @@ def running(name: str) -> bool:
     return name.lower() in out.lower()
 
 
+def check_self_update(setup: Path) -> None:
+    """Выпуск-макет на 127.0.0.1 с этим же установщиком: программа должна сама
+    скачать его, сверить сумму, закрыться, обновиться и запуститься снова —
+    сохранив выключенный автозапуск."""
+    import hashlib
+    import http.server
+    import json
+    import threading
+
+    feed = setup.parent / "feed"
+    feed.mkdir(exist_ok=True)
+    name = setup.name
+    shutil.copy(setup, feed / name)
+    digest = hashlib.sha256((feed / name).read_bytes()).hexdigest()
+    (feed / (name + ".sha256")).write_text(f"{digest}  {name}\n", encoding="utf-8")
+
+    handler = lambda *a, **kw: http.server.SimpleHTTPRequestHandler(*a, directory=str(feed), **kw)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    base = f"http://127.0.0.1:{srv.server_address[1]}/"
+    size = (feed / name).stat().st_size
+    (feed / "latest.json").write_text(json.dumps({"tag_name": "v99.0.0", "assets": [
+        {"browser_download_url": base + name, "size": size},
+        {"browser_download_url": base + name + ".sha256", "size": 90}]}), encoding="utf-8")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        winreg.DeleteValue(key, "LocalFlow")          # человек выключил автозапуск
+
+    marker = "Перехват клавиатуры включён"
+    starts = log_text().count(marker)
+    env = {**os.environ, "LOCALFLOW_UPDATE_FEED": base}
+    proc = subprocess.Popen([str(EXE)], env=env)
+    wait_log_count(marker, starts + 1, 60)
+    t0 = time.monotonic()
+    subprocess.run([str(EXE), "--update"], env=env, timeout=60)
+    wait_log("Обновление: ставлю", 120)
+    print(f"скачал и проверил за {time.monotonic() - t0:.1f} c")
+    try:
+        proc.wait(60)                                 # установщик закрыл старую копию
+    except subprocess.TimeoutExpired:
+        fail("установщик обновления не закрыл программу")
+    wait_log("Запуск после обновления", 180)
+    wait_log_count(marker, starts + 2, 60)
+    print(f"обновилась и запустилась снова за {time.monotonic() - t0:.1f} c")
+    if not running("LocalFlow.exe"):
+        fail("после обновления программа не запущена")
+    setup_log = LOCAL / "LocalFlow" / "logs" / "update-setup.log"
+    text = setup_log.read_text(encoding="utf-8", errors="replace") if setup_log.exists() else ""
+    if "Installation process succeeded" not in text:
+        fail(f"журнал установщика обновления:\n{text[-3000:]}")
+    if run_value() is not None:
+        fail(f"обновление включило выключенный автозапуск: {run_value()!r}")
+    subprocess.run([str(EXE), "--quit"], timeout=60)
+    time.sleep(3)
+    if running("LocalFlow.exe"):
+        fail("обновлённая программа не закрылась по --quit")
+    srv.shutdown()
+    print("обновление из программы работает, автозапуск остался выключен")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("setup")
@@ -148,6 +208,9 @@ def main() -> None:
     if not EXE.exists():
         fail("после обновления нет LocalFlow.exe")
     print("обновилось, старая копия закрыта")
+
+    step("Обновление из самой программы (кнопка «Обновить»)")
+    check_self_update(setup)
 
     step("Тихое удаление")
     subprocess.run([str(APP_DIR / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],

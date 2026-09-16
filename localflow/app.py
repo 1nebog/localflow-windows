@@ -15,7 +15,7 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import __version__, core, menu, panel, strings
+from . import __version__, core, menu, panel, strings, updates
 from .audio import AudioRecorder
 from .autotune import START_MODEL, AutoTune
 from .core import tr
@@ -32,7 +32,7 @@ TRAY_REFRESH_SEC = 0.3
 MUTEX_NAME = "Local\\LocalFlow-single-instance"
 MAIN_WINDOW_CLASS = "LocalFlowMain"
 COMMAND_MESSAGE = "LocalFlow-Command"
-COMMANDS = {"settings": 1, "quit": 2}
+COMMANDS = {"settings": 1, "quit": 2, "update": 3}
 
 
 def setup_logging(console: bool) -> None:
@@ -153,6 +153,10 @@ class App:
         self.polisher.on_gpu_disabled = lambda: self._set("llm_gpu", False)
         self.media = media.MediaPause()
         self.media.enabled = bool(self.cfg.get("pause_media", True))
+
+        self.updater = updates.Updater(DATA_DIR / "updates", log_dir=LOG_DIR,
+                                       autostart=self.autostart_enabled,
+                                       before_install=self._before_update)
 
         self.recorder = AudioRecorder()
         self.recorder.device = self.cfg.get("mic_device") or None
@@ -363,6 +367,31 @@ class App:
             raise box["error"]
         return box.get("value")
 
+    def start_update(self, info: dict | None) -> bool:
+        """Скачать и поставить новую версию. Только в установленной программе."""
+        if not FROZEN or not info or info.get("state") != "available":
+            return False
+        return self.updater.start(info)
+
+    def check_and_update(self) -> bool:
+        """То же, что кнопки «Проверить» и «Обновить» подряд (LocalFlow.exe --update)."""
+        return self.start_update(updates.check())
+
+    def _before_update(self) -> None:
+        # после перезапуска скажем, что обновились
+        self.cfg["updated_from"] = __version__
+        core.save_config(self.cfg)
+
+    def _after_update(self) -> None:
+        updates.clean_downloads(DATA_DIR / "updates")
+        old = self.cfg.pop("updated_from", None)
+        if old is None:
+            return
+        core.save_config(self.cfg)
+        log.info("Запуск после обновления: %s → %s", old, __version__)
+        if old != __version__:
+            self.notify(tr("updated"), tr("updated_msg").format(v=__version__))
+
     def open_url(self, url: str) -> None:
         """Ссылка — в обычном браузере человека."""
         try:
@@ -447,6 +476,8 @@ class App:
             self.open_panel()
         elif wparam == COMMANDS["quit"]:
             self.quit()
+        elif wparam == COMMANDS["update"]:
+            threading.Thread(target=self.check_and_update, daemon=True, name="update").start()
         return 0
 
     def quit(self) -> None:
@@ -496,6 +527,7 @@ class App:
             self.notify(tr("error_title"), tr("st_hook_error"))
         threading.Thread(target=self.recorder.warm_up, daemon=True, name="mic-warmup").start()
         self.media.warm_up()
+        self._after_update()
         threading.Thread(target=self._load_model, daemon=True, name="model-loader").start()
         threading.Thread(target=self._idle_loop, daemon=True, name="idle").start()
         self.pill.prewarm()
@@ -520,6 +552,9 @@ def main(argv: list[str] | None = None) -> None:
     if "--quit" in argv:
         # установщик закрывает программу перед обновлением и удалением
         send_command("quit", wait_exit=15)
+        return
+    if "--update" in argv:
+        send_command("update")
         return
     setup_logging(console=not FROZEN)
     if not single_instance():
