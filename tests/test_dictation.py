@@ -32,6 +32,7 @@ class FakeRecorder:
         self.fail = False
         self.starts = 0
         self.other_apis = 0          # сколько ещё подсистем можно попробовать
+        self.heard = None            # сколько записи «уже есть» к моменту снимка
 
     @property
     def raw_peak(self):
@@ -59,6 +60,9 @@ class FakeRecorder:
 
     def tail(self, sec):
         return self.audio[-int(sec * SR):]
+
+    def snapshot(self):
+        return self.audio[:self.heard] if self.heard is not None else self.audio
 
 
 class FakeTranscriber:
@@ -311,6 +315,38 @@ def test_lock_autostops_after_silence(d, monkeypatch):
     time.sleep(0.25)
     d.recorder.level = 0.0            # замолчал
     assert wait(lambda: d.paste.pasted, timeout=3)
+
+
+def test_lock_recognizes_during_pause_before_autostop(d, monkeypatch):
+    monkeypatch.setattr(Dictation, "LOCK_AUTOSTOP", 1.0)
+    monkeypatch.setattr(Dictation, "SPEC_AFTER", 0.1)
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    d.transcriber.delay = 0.5         # распознавание небыстрое
+    d.recorder.audio = np.concatenate([voice(1.0), np.zeros(SR, np.float32)])
+    hold(d, 0.05)
+    d.recorder.level = 0.3
+    time.sleep(0.2)
+    d.recorder.level = 0.0            # замолчал: распознаём, не дожидаясь автостопа
+    assert wait(lambda: d.transcriber.calls == 1, timeout=1)
+    assert d.recorder.is_recording    # запись ещё идёт, а распознавание уже
+    assert wait(lambda: d.paste.pasted, timeout=3)
+    assert d.transcriber.calls == 1   # после автостопа второй раз не считали
+
+
+def test_speech_after_early_recognition_is_not_lost(d, monkeypatch):
+    monkeypatch.setattr(Dictation, "SPEC_AFTER", 0.1)
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    d.recorder.audio = voice(2.0)
+    d.recorder.heard = SR             # заготовка — только по первой секунде
+    hold(d, 0.05)
+    d.recorder.level = 0.3
+    time.sleep(0.2)
+    d.recorder.level = 0.0
+    assert wait(lambda: d.transcriber.calls == 1, timeout=1)
+    d.on_key_event(HOTKEY_DOWN)       # остановил сам; после паузы ещё говорил
+    d.on_key_event(HOTKEY_UP)
+    assert wait(lambda: d.paste.pasted, timeout=3)
+    assert d.transcriber.calls == 2   # распознали всю запись заново
 
 
 def test_live_voice_cancel_only_on_fast_computer(d, monkeypatch):

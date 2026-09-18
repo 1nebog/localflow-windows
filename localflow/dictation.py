@@ -85,7 +85,10 @@ class Dictation:
     NOISE_RISE = 0.003       # как быстро фон ползёт вверх (~30 c до нового)
 
     SILENCE_GLOW_AFTER = 2.0  # секунд полной тишины, после которых синий → красный
-    LOCK_AUTOSTOP = 5.0       # секунд тишины в «замке» до автостопа
+    LOCK_AUTOSTOP = 3.0       # секунд тишины в «замке» до автостопа
+    # В «замке» после этой паузы начинаем распознавать заранее, пока ждём
+    # автостопа: если человек так и не продолжит, текст уже готов
+    SPEC_AFTER = 0.8
 
     VOICE_CANCEL_AFTER = 0.5   # секунд тишины до первой проверки
     VOICE_CANCEL_TAIL = 1.5    # сколько секунд хвоста скармливаем Whisper
@@ -138,6 +141,8 @@ class Dictation:
         self._heard_speech = False
         self._noise_floor = 0.0
         self._stop_lock = threading.Lock()
+        self._spec = None                      # распознанное заранее в «замке»
+        self._spec_running = threading.Event()
 
     # --- События клавиатуры -------------------------------------------------
 
@@ -233,6 +238,7 @@ class Dictation:
             return
         self._press_t = time.monotonic()
         self._heard_speech = False
+        self._spec = None
         self._noise_floor = 0.0
         self.keys.enter_armed = True   # с этой секунды Enter = «распознавай»
         self.sounds.play("start")
@@ -275,7 +281,12 @@ class Dictation:
                 self._heard_speech = True
                 last_voice = time.monotonic()
                 cancel_checks = 0
+                self._spec = None            # заговорил снова — заготовка устарела
             silent_for = time.monotonic() - last_voice
+            if (self._locked and self._heard_speech and self._spec is None
+                    and silent_for > self.SPEC_AFTER and self.transcriber.is_ready
+                    and not self._busy and not self._spec_running.is_set()):
+                self._start_speculative()
             if (self._heard_speech
                     and cancel_checks < self.VOICE_CANCEL_TRIES
                     and silent_for > self.VOICE_CANCEL_AFTER
@@ -322,12 +333,46 @@ class Dictation:
         except Exception as exc:
             log.warning("Живая проверка отмены не удалась: %s", exc)
 
+    def _trim(self, audio: np.ndarray) -> np.ndarray | None:
+        """Запись без тишины по краям; None — голоса нет вовсе."""
+        voiced = np.where(np.abs(audio) > self.SILENCE_PEAK)[0]
+        if voiced.size == 0:
+            return None
+        start = max(0, voiced[0] - int(0.15 * SAMPLE_RATE))
+        end = min(len(audio), voiced[-1] + int(0.35 * SAMPLE_RATE))
+        return audio[start:end]
+
+    def _start_speculative(self) -> None:
+        """Распознать уже сказанное, пока «замок» ждёт тишины до автостопа."""
+        full = self.recorder.snapshot()
+        part = self._trim(full)
+        if part is None or len(part) < SAMPLE_RATE * MIN_DURATION_SEC:
+            return
+        spec = {"n": len(full), "done": threading.Event(), "text": None}
+        self._spec = spec
+        self._spec_running.set()
+
+        def run():
+            try:
+                ctx = self.screen_context()
+                self.transcriber.hint_terms = title_terms(ctx["title"]) + (
+                    self.autodict.terms() if self.autodict is not None else [])
+                spec["text"] = self.transcriber.transcribe(part)
+            except Exception as exc:
+                log.info("Заранее распознать не вышло: %s", exc)
+            finally:
+                spec["done"].set()
+                self._spec_running.clear()
+        threading.Thread(target=run, daemon=True, name="speculative").start()
+
     def _finish_recording(self) -> None:
         with self._stop_lock:
             if not self.recorder.is_recording:
                 return
             self.keys.enter_armed = False
             audio = self.recorder.stop()
+            spec, self._spec = self._spec, None
+        t_stop = time.monotonic()
         self.media.resume()
         self.sounds.play("stop")
 
@@ -350,22 +395,23 @@ class Dictation:
                 self._notify(tr("mic_title"), tr("mic_blocked_msg"))
             self.indicator.hide(after=2.5)
             return
-        voiced = np.where(np.abs(audio) > self.SILENCE_PEAK)[0]
-        if voiced.size == 0:
+        # Заготовка годится, только если после неё человек ничего не сказал
+        if spec is not None and (np.abs(audio[spec["n"]:]) > self.SILENCE_PEAK).any():
+            spec = None
+        trimmed = self._trim(audio)
+        if trimmed is None:
             log.info("Тишина (пик %.4f) — не анализирую", peak)
             self.indicator.show_text(tr("silence"), glow="red")
             self.indicator.hide(after=1.2)
             return
-        start = max(0, voiced[0] - int(0.15 * SAMPLE_RATE))
-        end = min(len(audio), voiced[-1] + int(0.35 * SAMPLE_RATE))
-        audio = audio[start:end]
+        audio = trimmed
 
         # Резервная запись до распознавания: упадём — текст не потеряется
         save_recovery(audio)
 
         self.indicator.show_text(tr("transcribing"), glow="green")
         self._busy = True
-        threading.Thread(target=self._transcribe_and_paste, args=(audio, peak),
+        threading.Thread(target=self._transcribe_and_paste, args=(audio, peak, spec, t_stop),
                          daemon=True, name="transcriber").start()
 
     # --- Распознавание и вставка -------------------------------------------
@@ -500,15 +546,23 @@ class Dictation:
         if self.on_history_changed:
             self.on_history_changed()
 
-    def _transcribe_and_paste(self, audio: np.ndarray, peak: float) -> None:
+    def _transcribe_and_paste(self, audio: np.ndarray, peak: float, spec: dict | None = None,
+                              t_stop: float | None = None) -> None:
         voice_cancelled = False
+        t_stop = t_stop or time.monotonic()
         try:
             if not self._wait_for_model():
                 raise RuntimeError("модель не загрузилась")
             ctx = self.screen_context()
-            self.transcriber.hint_terms = title_terms(ctx["title"]) + (
-                self.autodict.terms() if self.autodict is not None else [])
-            text = self.transcriber.transcribe(audio)
+            text = None
+            if spec is not None and spec["done"].wait(120) and spec["text"] is not None:
+                text = spec["text"]
+                log.info("Текст распознан заранее, пока ждали тишину")
+            if text is None:
+                self.transcriber.hint_terms = title_terms(ctx["title"]) + (
+                    self.autodict.terms() if self.autodict is not None else [])
+                text = self.transcriber.transcribe(audio)
+            t_heard = time.monotonic()
             if text and is_hallucination(text) and peak < 0.08:
                 log.info("Похоже на галлюцинацию (пик %.4f): %r — пропускаю", peak, text)
                 text = ""
@@ -529,6 +583,7 @@ class Dictation:
             target, text = self._resolve_translate(text)
             raw_text = text  # каким текст был ДО умного исправления
             text = self._polish_or_translate(text, target, ctx)
+            t_polished = time.monotonic()
             # Структура голосом — после правки: модель уже расставила
             # границы предложений, по которым режется перечень
             if text and self.voice_structure and not self.transcriber.last_verbatim:
@@ -538,7 +593,10 @@ class Dictation:
                 method = profile.get("paste_method", self.paste_method)
                 text = self._apply_style(text)
                 add_stats(len(text.split()), len(audio) / SAMPLE_RATE)
-                log.info("Вставка в %r методом %s", self._active_app or "?", method)
+                log.info("Вставка в %r методом %s — текст готов через %.1f c после "
+                         "остановки (распознавание %.1f c, исправление %.1f c)",
+                         self._active_app or "?", method, time.monotonic() - t_stop,
+                         t_heard - t_stop, t_polished - t_heard)
                 if self.paste.paste_text(text, method):
                     self._last_paste_t = time.monotonic()
                     self._undo_armed = True

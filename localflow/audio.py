@@ -349,6 +349,12 @@ class AudioRecorder:
             return np.zeros(0, dtype=np.float32)
         return resample_to_16k(np.concatenate(chunks).reshape(-1), self._rate)
 
+    def snapshot(self) -> np.ndarray:
+        """Вся запись до этого момента, не останавливая её (16 кГц, моно)."""
+        with self._lock:
+            chunks = list(self._chunks)
+        return self._join(chunks)
+
     def tail(self, seconds: float) -> np.ndarray:
         """Последние N секунд записи, не останавливая её (16 кГц, моно)."""
         n = int(seconds * self._rate)
