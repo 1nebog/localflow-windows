@@ -349,6 +349,11 @@ class AudioRecorder:
             return np.zeros(0, dtype=np.float32)
         return resample_to_16k(np.concatenate(chunks).reshape(-1), self._rate)
 
+    @property
+    def elapsed(self) -> float:
+        """Сколько секунд идёт запись — для часов на таблетке."""
+        return time.monotonic() - self._started_at if self._recording else 0.0
+
     def snapshot(self) -> np.ndarray:
         """Вся запись до этого момента, не останавливая её (16 кГц, моно)."""
         with self._lock:

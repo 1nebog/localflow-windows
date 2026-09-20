@@ -33,6 +33,11 @@ class FakeRecorder:
         self.starts = 0
         self.other_apis = 0          # сколько ещё подсистем можно попробовать
         self.heard = None            # сколько записи «уже есть» к моменту снимка
+        self.started_at = 0.0
+
+    @property
+    def elapsed(self):
+        return time.monotonic() - self.started_at if self._rec else 0.0
 
     @property
     def raw_peak(self):
@@ -53,6 +58,7 @@ class FakeRecorder:
             raise OSError("нет микрофона")
         self.starts += 1
         self._rec = True
+        self.started_at = time.monotonic()
 
     def stop(self):
         self._rec = False
@@ -78,11 +84,21 @@ class FakeTranscriber:
         self.delay = 0.0
         self.calls = 0
         self.snippets = 0
+        self.pieces = []             # длины кусков длинной диктовки
+        self.finished = None
 
     def transcribe(self, audio):
         self.calls += 1
         time.sleep(self.delay)
         return self.text
+
+    def raw_text(self, audio):
+        self.pieces.append(round(len(audio) / SR, 1))
+        return f"часть{len(self.pieces)}"
+
+    def finish_text(self, raw):
+        self.finished = raw
+        return raw
 
     def transcribe_snippet(self, audio_i16, prompt=None):
         self.snippets += 1
@@ -347,6 +363,36 @@ def test_speech_after_early_recognition_is_not_lost(d, monkeypatch):
     d.on_key_event(HOTKEY_UP)
     assert wait(lambda: d.paste.pasted, timeout=3)
     assert d.transcriber.calls == 2   # распознали всю запись заново
+
+
+def test_long_dictation_is_recognized_in_pieces_while_speaking(d, monkeypatch):
+    monkeypatch.setattr(Dictation, "PARTIAL_AFTER_SEC", 0.05)
+    monkeypatch.setattr(Dictation, "PARTIAL_MIN_SEC", 1.0)
+    monkeypatch.setattr(Dictation, "PARTIAL_PAUSE", 0.1)
+    monkeypatch.setattr(Dictation, "LOCK_AUTOSTOP", 0.6)
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    d.recorder.audio = voice(60.0)
+    d.recorder.heard = SR * 40          # к паузе записано 40 c из 60
+    hold(d, 0.05)                       # тап — «замок»
+    d.recorder.level = 0.3
+    time.sleep(0.2)
+    d.recorder.level = 0.0              # пауза: разбираем сказанное на ходу
+    assert wait(lambda: d.transcriber.pieces, timeout=2)
+    assert d.recorder.is_recording      # запись при этом продолжается
+    assert wait(lambda: d.paste.pasted, timeout=5)
+    # первый кусок — 40 c, второй — остаток записи; целиком не гоняли
+    assert d.transcriber.pieces[0] == 40.0 and len(d.transcriber.pieces) == 2
+    assert 15 < d.transcriber.pieces[1] <= 20
+    assert d.transcriber.calls == 0
+    assert d.transcriber.finished == "часть1 часть2"
+    assert d.paste.pasted[0][0] == "часть1 часть2"
+
+
+def test_short_dictation_is_recognized_as_one_piece(d, monkeypatch):
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    hold(d)
+    assert wait(lambda: d.paste.pasted)
+    assert d.transcriber.pieces == [] and d.transcriber.calls == 1
 
 
 def test_live_voice_cancel_only_on_fast_computer(d, monkeypatch):

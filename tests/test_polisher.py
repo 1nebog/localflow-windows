@@ -257,3 +257,22 @@ def test_set_mode_is_thread_safe(make, models):
     else:
         assert p.ready and FakeServer.instances[-1].model.name == LLM_MODELS[p.mode].file
     assert sum(s.alive for s in FakeServer.instances) == 1
+
+
+def test_very_long_text_is_polished_within_a_time_budget(make, models, monkeypatch):
+    put_model(models, "fast")
+    p = make()
+    switch(p, "fast")
+    monkeypatch.setattr("localflow.polisher.LLM_POLISH_BUDGET_SEC", 0.25)
+
+    def slow(user):                      # модель отвечает не мгновенно
+        time.sleep(0.1)
+        return user.split("\n")[-1].strip().capitalize()
+    FakeServer.answer = slow
+    src = " ".join(f"фраза номер {i} про кнопку и форму." for i in range(40))
+    out = p.polish(src, "ru")
+    srv = FakeServer.instances[-1]
+    assert 0 < len(srv.requests) < 10    # успели немного и остановились
+    assert out.startswith("Фраза номер 0")          # начало причёсано
+    assert out.endswith("фраза номер 39 про кнопку и форму.")   # хвост как был
+    assert len(out) >= len(src) - 5      # текст не потерян

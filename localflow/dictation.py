@@ -33,7 +33,7 @@ from .audio import DEAD_PEAK
 from .core import (
     LANG_NAMES, MIN_DURATION_SEC, SAMPLE_RATE, SILENCE_PEAK_LEVEL, add_stats,
     casual_tone, clear_recovery, email_tone, extract_rewrite_cmd, extract_translate_cmd,
-    is_hallucination, is_messenger_app, is_voice_cancel, load_recovery,
+    fmt_elapsed, is_hallucination, is_messenger_app, is_voice_cancel, load_recovery,
     notes_tone, prune_history, save_history, save_recovery, structure_by_voice,
     title_terms, tr,
 )
@@ -49,10 +49,10 @@ N_BARS = 20   # столбиков волны в таблетке
 class NullIndicator:
     """Таблетка-заглушка: пока настоящей нет, пишет состояние в журнал."""
 
-    def show_text(self, text, locked=False, glow="blue"):
+    def show_text(self, text, locked=False, glow="blue", timer=""):
         log.debug("[таблетка] %s (%s%s)", text, glow, ", замок" if locked else "")
 
-    def show_wave(self, levels, locked=False, glow="blue"):
+    def show_wave(self, levels, locked=False, glow="blue", timer=""):
         pass
 
     def hide(self, after=0.0):
@@ -89,6 +89,11 @@ class Dictation:
     # В «замке» после этой паузы начинаем распознавать заранее, пока ждём
     # автостопа: если человек так и не продолжит, текст уже готов
     SPEC_AFTER = 0.8
+    # Длинная диктовка разбирается кусками прямо во время записи — на паузах
+    # между мыслями. Иначе в конце пришлось бы ждать распознавания всей речи
+    PARTIAL_AFTER_SEC = 40.0   # короткие диктовки не трогаем
+    PARTIAL_MIN_SEC = 20.0     # кусок короче не берём
+    PARTIAL_PAUSE = 0.7        # режем по паузе, а не посреди слова
 
     VOICE_CANCEL_AFTER = 0.5   # секунд тишины до первой проверки
     VOICE_CANCEL_TAIL = 1.5    # сколько секунд хвоста скармливаем Whisper
@@ -143,6 +148,10 @@ class Dictation:
         self._stop_lock = threading.Lock()
         self._spec = None                      # распознанное заранее в «замке»
         self._spec_running = threading.Event()
+        self._partial_text = ""                # длинная диктовка: что уже разобрано
+        self._partial_n = 0                    # сколько отсчётов записи разобрано
+        self._stage = None                     # что написано, пока думаем
+        self._proc_t0 = 0.0                    # когда начали думать
 
     # --- События клавиатуры -------------------------------------------------
 
@@ -239,6 +248,7 @@ class Dictation:
         self._press_t = time.monotonic()
         self._heard_speech = False
         self._spec = None
+        self._partial_text, self._partial_n = "", 0
         self._noise_floor = 0.0
         self.keys.enter_armed = True   # с этой секунды Enter = «распознавай»
         self.sounds.play("start")
@@ -251,6 +261,7 @@ class Dictation:
                 return
             self._locked = False
             self.keys.enter_armed = False
+            self._partial_text, self._partial_n = "", 0
             self.recorder.stop()
         self.media.resume()
         log.info("Запись отменена (%s)", reason)
@@ -283,9 +294,15 @@ class Dictation:
                 cancel_checks = 0
                 self._spec = None            # заговорил снова — заготовка устарела
             silent_for = time.monotonic() - last_voice
-            if (self._locked and self._heard_speech and self._spec is None
+            if (self._heard_speech and silent_for > self.PARTIAL_PAUSE
+                    and self.transcriber.is_ready and not self._busy
+                    and not self._spec_running.is_set()
+                    and self.recorder.elapsed >= self.PARTIAL_AFTER_SEC):
+                self._start_partial()
+            elif (self._locked and self._heard_speech and self._spec is None
                     and silent_for > self.SPEC_AFTER and self.transcriber.is_ready
-                    and not self._busy and not self._spec_running.is_set()):
+                    and not self._busy and not self._spec_running.is_set()
+                    and self.recorder.elapsed < self.PARTIAL_AFTER_SEC):
                 self._start_speculative()
             if (self._heard_speech
                     and cancel_checks < self.VOICE_CANCEL_TRIES
@@ -315,7 +332,8 @@ class Dictation:
             else:
                 last_hint = None
                 wave.append(min(1.0, lvl * 14))
-                self.indicator.show_wave(list(wave), locked=self._locked, glow=glow)
+                self.indicator.show_wave(list(wave), locked=self._locked, glow=glow,
+                                         timer=fmt_elapsed(self.recorder.elapsed))
             time.sleep(0.1)
 
     def _check_voice_cancel(self) -> None:
@@ -365,6 +383,63 @@ class Dictation:
                 self._spec_running.clear()
         threading.Thread(target=run, daemon=True, name="speculative").start()
 
+    def _start_partial(self) -> None:
+        """Разобрать очередной кусок длинной записи в фоне."""
+        full = self.recorder.snapshot()
+        n = len(full)
+        if (n - self._partial_n) / SAMPLE_RATE < self.PARTIAL_MIN_SEC:
+            return
+        piece = full[self._partial_n:n]
+        self._spec_running.set()
+
+        def run():
+            try:
+                self.transcriber.hint_terms = title_terms(self._active_title) + (
+                    self.autodict.terms() if self.autodict is not None else [])
+                text = self.transcriber.raw_text(piece)
+                if text:
+                    self._partial_text = (self._partial_text + " " + text).strip()
+                self._partial_n = n
+            except Exception as exc:
+                log.warning("Кусок длинной диктовки не разобрался: %s", exc)
+            finally:
+                self._spec_running.clear()
+        threading.Thread(target=run, daemon=True, name="partial").start()
+
+    def _show_stage(self, text: str, glow: str = "green") -> None:
+        """Что показываем, пока думаем над записью, — с часами ожидания."""
+        self._stage = (text, glow)
+        self.indicator.show_text(text, glow=glow,
+                                 timer=fmt_elapsed(time.monotonic() - self._proc_t0))
+
+    def _processing_clock(self) -> None:
+        """Пока идёт распознавание, на таблетке тикает время ожидания:
+        видно, что программа работает, а не зависла."""
+        while self._busy:
+            time.sleep(0.5)
+            stage = self._stage
+            if stage is None or not self._busy:
+                break
+            self.indicator.show_text(
+                stage[0], glow=stage[1],
+                timer=fmt_elapsed(time.monotonic() - self._proc_t0))
+
+    def _tail_after_partials(self, full, start: int, end: int):
+        """Дождаться кусков длинной диктовки: (разобранный текст, остаток)."""
+        if not (self._partial_text or self._spec_running.is_set()):
+            return "", None
+        deadline = time.monotonic() + 300
+        while self._spec_running.is_set() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        prefix, used = self._partial_text.strip(), self._partial_n
+        self._partial_text, self._partial_n = "", 0
+        if not prefix:
+            return "", None
+        tail = full[max(used, start):end]
+        log.info("Длинная диктовка: %d знаков разобрано на ходу, остаток %.1f c",
+                 len(prefix), len(tail) / SAMPLE_RATE)
+        return prefix, tail
+
     def _finish_recording(self) -> None:
         with self._stop_lock:
             if not self.recorder.is_recording:
@@ -398,20 +473,26 @@ class Dictation:
         # Заготовка годится, только если после неё человек ничего не сказал
         if spec is not None and (np.abs(audio[spec["n"]:]) > self.SILENCE_PEAK).any():
             spec = None
-        trimmed = self._trim(audio)
-        if trimmed is None:
+        voiced = np.where(np.abs(audio) > self.SILENCE_PEAK)[0]
+        if voiced.size == 0:
             log.info("Тишина (пик %.4f) — не анализирую", peak)
             self.indicator.show_text(tr("silence"), glow="red")
             self.indicator.hide(after=1.2)
             return
-        audio = trimmed
+        start = max(0, voiced[0] - int(0.15 * SAMPLE_RATE))
+        end = min(len(audio), voiced[-1] + int(0.35 * SAMPLE_RATE))
+        full, audio = audio, audio[start:end]
 
         # Резервная запись до распознавания: упадём — текст не потеряется
         save_recovery(audio)
 
-        self.indicator.show_text(tr("transcribing"), glow="green")
         self._busy = True
-        threading.Thread(target=self._transcribe_and_paste, args=(audio, peak, spec, t_stop),
+        self._proc_t0 = t_stop
+        self._show_stage(tr("transcribing"))
+        threading.Thread(target=self._processing_clock, daemon=True,
+                         name="proc-clock").start()
+        threading.Thread(target=self._transcribe_and_paste,
+                         args=(audio, peak, spec, t_stop, full, start, end),
                          daemon=True, name="transcriber").start()
 
     # --- Распознавание и вставка -------------------------------------------
@@ -504,13 +585,13 @@ class Dictation:
         out_lang = self.transcriber.last_language
         if target:
             # Перевод делает и чистку речи заодно: один проход модели
-            self.indicator.show_text(tr("translating"), glow="green")
+            self._show_stage(tr("translating"))
             text, ok = p.translate(text, target, ctx)
             if not ok:
                 # Не перевелось — вставляем оригинал, но причёсанный
                 text = p.polish(text, out_lang, ctx)
             return text
-        self.indicator.show_text(tr("polishing"), glow="green")
+        self._show_stage(tr("polishing"))
         return p.polish(text, out_lang, ctx)
 
     def _apply_style(self, text: str) -> str:
@@ -547,7 +628,8 @@ class Dictation:
             self.on_history_changed()
 
     def _transcribe_and_paste(self, audio: np.ndarray, peak: float, spec: dict | None = None,
-                              t_stop: float | None = None) -> None:
+                              t_stop: float | None = None, full=None,
+                              start: int = 0, end: int = 0) -> None:
         voice_cancelled = False
         t_stop = t_stop or time.monotonic()
         try:
@@ -555,7 +637,12 @@ class Dictation:
                 raise RuntimeError("модель не загрузилась")
             ctx = self.screen_context()
             text = None
-            if spec is not None and spec["done"].wait(120) and spec["text"] is not None:
+            prefix, tail = self._tail_after_partials(full, start, end)
+            if prefix:
+                raw_tail = (self.transcriber.raw_text(tail)
+                            if tail is not None and len(tail) > SAMPLE_RATE * 0.4 else "")
+                text = self.transcriber.finish_text(f"{prefix} {raw_tail}".strip())
+            elif spec is not None and spec["done"].wait(120) and spec["text"] is not None:
                 text = spec["text"]
                 log.info("Текст распознан заранее, пока ждали тишину")
             if text is None:
@@ -613,6 +700,7 @@ class Dictation:
             self._notify(tr("error_title"), str(exc))
         finally:
             self._busy = False
+            self._stage = None
             self._last_use_t = time.monotonic()
             if self.recorder.is_recording:
                 pass

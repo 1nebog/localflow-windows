@@ -18,7 +18,7 @@ from pathlib import Path
 from .core import (
     _CTX_ECHO_RE, _LLM_PREAMBLE_RE, _LLM_REWRITE_SHOTS, _LLM_REWRITE_SYSTEM,
     _LLM_SHOTS, _LLM_SYSTEM, _LLM_TRANSLATE_SYSTEM, ADDED_WORDS_LIMIT,
-    LANG_NAMES, LLM_MAX_CHARS, LLM_MIN_CHARS, LLM_MODES, TASK_POLISH,
+    LANG_NAMES, LLM_MAX_CHARS, LLM_MIN_CHARS, LLM_MODES, LLM_POLISH_BUDGET_SEC, TASK_POLISH,
     TASK_REWRITE, TASK_TRANSLATE, added_content_ratio, context_hint,
     drop_invented_dashes, invented_numbers, learned_shots, looks_like_lang,
     same_script, split_for_llm, text_similarity, translate_shots,
@@ -223,16 +223,25 @@ class TextPolisher:
         try:
             # Переносы строк — это голосовые команды («новый абзац»):
             # правим каждый кусок отдельно, чтобы модель их не склеила
-            out_parts = []
+            out_parts, left = [], 0
             for p in text.split("\n"):
                 if not p.strip():
                     out_parts.append(p)
                     continue
                 # Длинную реплику режем по предложениям: модель точнее правит
                 # короткий кусок, а промах в одном не тянет за собой остальные
-                out_parts.append("".join(self._polish_chunk(c, hint)
-                                         for c in split_for_llm(p)))
+                done = []
+                for c in split_for_llm(p):
+                    if time.monotonic() - t0 > LLM_POLISH_BUDGET_SEC:
+                        done.append(c)      # время вышло — как распознано
+                        left += len(c)
+                        continue
+                    done.append(self._polish_chunk(c, hint))
+                out_parts.append("".join(done))
             result = "\n".join(out_parts)
+            if left:
+                log.info("Исправление не успело за %.0f c: %d знаков из %d "
+                         "оставлены как есть", LLM_POLISH_BUDGET_SEC, left, len(text))
         except Exception as exc:
             log.error("Исправление упало: %s", exc)
             return text

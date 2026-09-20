@@ -38,6 +38,7 @@ PANEL_STRINGS = {
         "tab_snippets": "Сниппеты", "tab_stats": "Статистика",
         "st_today": "Сегодня", "st_total": "Всего слов",
         "st_dicts": "Диктовок", "st_saved": "Сэкономлено времени",
+        "st_avg": "Средняя диктовка",
         "st_saved_hint": "против набора ~40 слов/мин",
         "st_words": "слов", "st_chart": "Слова по дням — 2 недели",
         "st_hour": "ч", "st_min": "мин", "st_sec": "с",
@@ -69,6 +70,7 @@ PANEL_STRINGS = {
         "tab_snippets": "Snippets", "tab_stats": "Statistics",
         "st_today": "Today", "st_total": "Total words",
         "st_dicts": "Dictations", "st_saved": "Time saved",
+        "st_avg": "Average dictation",
         "st_saved_hint": "vs typing at ~40 wpm",
         "st_words": "words", "st_chart": "Words per day — 2 weeks",
         "st_hour": "h", "st_min": "min", "st_sec": "s",
@@ -100,6 +102,7 @@ PANEL_STRINGS = {
         "tab_snippets": "Сніпети", "tab_stats": "Статистика",
         "st_today": "Сьогодні", "st_total": "Усього слів",
         "st_dicts": "Диктувань", "st_saved": "Заощаджено часу",
+        "st_avg": "Середнє диктування",
         "st_saved_hint": "проти набору ~40 слів/хв",
         "st_words": "слів", "st_chart": "Слова по днях — 2 тижні",
         "st_hour": "год", "st_min": "хв", "st_sec": "с",
@@ -131,6 +134,7 @@ PANEL_STRINGS = {
         "tab_snippets": "Snippets", "tab_stats": "Statistik",
         "st_today": "Heute", "st_total": "Wörter gesamt",
         "st_dicts": "Diktate", "st_saved": "Zeit gespart",
+        "st_avg": "Diktat im Schnitt",
         "st_saved_hint": "vs. Tippen mit ~40 WPM",
         "st_words": "Wörter", "st_chart": "Wörter pro Tag — 2 Wochen",
         "st_hour": "Std", "st_min": "Min", "st_sec": "s",
@@ -851,7 +855,8 @@ function renderStats(){
       <div class="lbl">${L.st_today}, ${L.st_words}</div>
       <div class="sub">${s.today.n} ${L.st_dicts.toLowerCase()}</div></div>
     <div class="stat"><div class="num">${fmt(s.total.words)}</div><div class="lbl">${L.st_total}</div></div>
-    <div class="stat"><div class="num">${fmt(s.total.n)}</div><div class="lbl">${L.st_dicts}</div></div>
+    <div class="stat"><div class="num">${fmt(s.total.n)}</div><div class="lbl">${L.st_dicts}</div>
+      <div class="sub">${L.st_avg}: ${human(s.total.avg_sec||0)}</div></div>
     <div class="stat"><div class="num">${human(saved)}</div><div class="lbl">${L.st_saved}</div>
       <div class="sub">${L.st_saved_hint}</div></div></div>
     <div class="chart-card"><div class="chart-title">${L.st_chart}</div><div class="chart" id="chart"></div></div>`;

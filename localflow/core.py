@@ -72,6 +72,11 @@ LLM_MIN_CHARS = 12        # совсем короткие фразы через 
 
 LLM_MAX_CHARS = 4000      # защита от гигантских кусков (дороже, чем полезнее)
 
+# Сколько секунд максимум причёсываем одну диктовку. Длинная речь режется на
+# куски, и каждый стоит секунды: без ограничения человек ждал бы минуты. Что
+# не успели — вставляем как распознано, текст от этого не теряется.
+LLM_POLISH_BUDGET_SEC = 25.0
+
 # --- Диктовка с переводом ----------------------------------------------------
 # Говоришь по-русски — вставляется по-английски. Смысл не в экономии слов,
 # а в том, что думать и формулировать быстрее на родном языке, а промпт
@@ -1396,6 +1401,11 @@ def apply_self_corrections(text: str) -> str:
 
 _stats_lock = threading.Lock()
 
+def fmt_elapsed(sec: float) -> str:
+    """Секунды в «0:07» / «12:05» — для таймера на таблетке."""
+    m, s = divmod(int(max(0.0, sec)), 60)
+    return f"{m}:{s:02d}"
+
 def add_stats(words: int, audio_sec: float) -> None:
     """Копит по дням: сколько диктовок, слов и секунд речи."""
     with _stats_lock:
@@ -1442,6 +1452,8 @@ def stats_summary() -> dict:
         last14.append({
             "d": key, "words": days.get(key, {}).get("words", 0),
         })
+    total["avg_sec"] = total["sec"] / total["n"] if total["n"] else 0.0
+    today["avg_sec"] = today["sec"] / today["n"] if today.get("n") else 0.0
     return {"today": today, "total": total, "last14": last14}
 
 def save_recovery(audio: np.ndarray) -> None:

@@ -327,6 +327,45 @@ class Transcriber:
             log.warning("Спасение хвоста не удалось: %s", exc)
             return text
 
+    def raw_text(self, audio: np.ndarray) -> str:
+        """Сырой текст куска: без словаря, сниппетов и команд редактора.
+
+        Нужен длинным диктовкам: они разбираются кусками прямо во время
+        записи, а вся доводка делается один раз по склеенному тексту —
+        иначе кусок мог бы сойти за сниппет или команду.
+        """
+        if not self._ready:
+            raise RuntimeError("Модель ещё не загружена")
+        lang = None if self.language == "auto" else self.language
+        prompt = build_initial_prompt(self.language, self.hint_terms)
+        t0 = time.monotonic()
+        result = self._decode(audio, lang, prompt)
+        raw = self._recover_tail(audio, result, result["text"].strip(), lang)
+        self.last_language = result.get("language") or lang or "ru"
+        log.info("Кусок %.0f c распознан за %.1f c: %r",
+                 len(audio) / SAMPLE_RATE, time.monotonic() - t0, raw[-80:])
+        return strip_prompt_echo(raw)
+
+    def finish_text(self, raw_text: str) -> str:
+        """Общая доводка распознанного: чистка, словарь, сниппеты, команды."""
+        detected = self.last_language or "ru"
+        text = strip_loop_tail(raw_text)
+        text = scrub_hallucinations(text)
+        if is_spam_repeat(text):
+            log.info("Спам-повтор (галлюцинация): %r — пропускаю", text)
+            return ""
+        cmd = apply_editor_command(text)
+        if cmd is not None:
+            log.info("Команда редактора: %r -> %r", text, cmd)
+            self.last_verbatim = True
+            return cmd
+        text = apply_self_corrections(text)
+        text = apply_dictionary(clean_text(text, detected))
+        before_snippet = text
+        text = apply_snippet(text)
+        self.last_verbatim = text != before_snippet
+        return text
+
     def transcribe(self, audio: np.ndarray) -> str:
         """Распознать буфер аудио. Возвращает текст без висящих пробелов."""
         if not self._ready:

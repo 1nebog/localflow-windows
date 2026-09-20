@@ -38,6 +38,9 @@ TEXT_PX = 15          # текст ужимается до TEXT_MIN_PX, если
 TEXT_MIN_PX = 11
 TEXT_SIDE = 17        # поля текста с каждой стороны
 LOCK_X = 14           # замок от левого края капсулы
+TIMER_PX = 11         # часы записи справа в капсуле
+TIMER_X = 14          # от правого края капсулы
+TIMER_ALPHA = 0.55
 
 GLOW_SIGMA = 11.0     # размытие свечения (shadowRadius 22 на Mac)
 CAPSULE_GRAY = 0.07
@@ -86,6 +89,7 @@ class PillModel:
         self.mode = "text"            # "text" | "wave"
         self.text = ""
         self.locked = False
+        self.timer = ""               # «0:07» справа: сколько идёт запись
         self.glow = "blue"
         self._color_from = COLORS["blue"]
         self._color_to = COLORS["blue"]
@@ -119,9 +123,11 @@ class PillModel:
             self.appear_t0 = now
         return fresh
 
-    def show_text(self, text: str, locked: bool, glow: str, now: float) -> bool:
+    def show_text(self, text: str, locked: bool, glow: str, now: float,
+                  timer: str = "") -> bool:
         """Возвращает True, если таблетка только что появилась."""
         fresh = self._appear(now)
+        self.timer = timer
         if fresh or self.mode != "text" or text != self.text:
             self.text_t0 = now
             self.shimmer_t0 = now
@@ -131,8 +137,10 @@ class PillModel:
         self.mode, self.text, self.locked = "text", text, locked
         return fresh
 
-    def show_wave(self, levels, locked: bool, glow: str, now: float) -> bool:
+    def show_wave(self, levels, locked: bool, glow: str, now: float,
+                  timer: str = "") -> bool:
         fresh = self._appear(now)
+        self.timer = timer
         lv = np.zeros(N_BARS, np.float32)
         vals = np.clip(np.asarray(list(levels)[:N_BARS], np.float32), 0.0, 1.0)
         lv[:len(vals)] = vals
@@ -302,8 +310,12 @@ class PillRenderer:
             return side
         return max(side, self._lock_pos[0] + self._lock.shape[1] + round(6 * self.scale))
 
-    def text_px(self, text: str, text_mask, locked: bool = False) -> np.ndarray:
-        limit = self.w - self._text_left(locked) - round(TEXT_SIDE * self.scale)
+    def timer_mask(self, text: str, text_mask):
+        return text_mask(text, round(TIMER_PX * self.scale))
+
+    def text_px(self, text: str, text_mask, locked: bool = False,
+                reserved: int = 0) -> np.ndarray:
+        limit = self.w - self._text_left(locked) - round(TEXT_SIDE * self.scale) - reserved
         px = TEXT_PX
         while True:
             mask = text_mask(text, round(px * self.scale))
@@ -331,11 +343,23 @@ class PillRenderer:
             m = np.zeros((self.h, self.w), np.float32)
             m[ly:ly + lh, lx:lx + lw] = self._lock * 0.9
             layers.append((m, (1.0, 1.0, 1.0)))
+        timer_w = 0
+        if model.timer:
+            tm = self.timer_mask(model.timer, text_mask)
+            th, tw = tm.shape
+            if th and tw:
+                m = np.zeros((self.h, self.w), np.float32)
+                x = self.w - round(TIMER_X * self.scale) - tw
+                y = (self.h - th) // 2
+                if x > 0 and y >= 0:
+                    m[y:y + th, x:x + tw] = tm * TIMER_ALPHA
+                    layers.append((m, (1.0, 1.0, 1.0)))
+                    timer_w = tw + round(8 * self.scale)
         if model.mode == "wave":
             model.step_bars(now)
             layers.append((self._bars_mask(model.bars), BAR_COLOR))
         elif model.text:
-            m = self._text_layer(model, now, text_mask)
+            m = self._text_layer(model, now, text_mask, timer_w)
             if m is not None:
                 layers.append((m, (1.0, 1.0, 1.0)))
         for m, col in layers:
@@ -359,8 +383,8 @@ class PillRenderer:
         d = np.sqrt(self._bar_dx[None, :] ** 2 + dy ** 2) - half_w
         return np.clip(0.5 - d, 0.0, 1.0).astype(np.float32)
 
-    def _text_layer(self, model: PillModel, now: float, text_mask):
-        mask = self.text_px(model.text, text_mask, model.locked)
+    def _text_layer(self, model: PillModel, now: float, text_mask, reserved: int = 0):
+        mask = self.text_px(model.text, text_mask, model.locked, reserved)
         th, tw = mask.shape
         if not th or not tw:
             return None
@@ -368,7 +392,7 @@ class PillRenderer:
         fade = _ease_out(t)
         rise = round(TEXT_RISE * self.scale * (1 - fade))
         layer = np.zeros((self.h, self.w), np.float32)
-        x = (self.w - tw) // 2
+        x = (self.w - tw - reserved) // 2
         if model.locked:
             x = max(x, self._text_left(True))
         y = (self.h - th) // 2 + rise
@@ -420,20 +444,22 @@ class PillController:
         self._wave_slot = None
         self._wave_queued = False
 
-    def show_text(self, text: str, locked: bool = False, glow: str = "blue") -> None:
+    def show_text(self, text: str, locked: bool = False, glow: str = "blue",
+                  timer: str = "") -> None:
         with self._lock:
             self._gen += 1
             self._wave_slot = None
 
         def _show():
-            fresh = self.model.show_text(text, locked, glow, self._clock())
+            fresh = self.model.show_text(text, locked, glow, self._clock(), timer)
             self._surface.present(fresh)
         self._post(_show)
 
-    def show_wave(self, levels, locked: bool = False, glow: str = "blue") -> None:
+    def show_wave(self, levels, locked: bool = False, glow: str = "blue",
+                  timer: str = "") -> None:
         with self._lock:
             self._gen += 1
-            self._wave_slot = (list(levels), locked, glow)
+            self._wave_slot = (list(levels), locked, glow, timer)
             if self._wave_queued:
                 return
             self._wave_queued = True
@@ -445,7 +471,8 @@ class PillController:
             slot, self._wave_slot = self._wave_slot, None
         if slot is None:
             return
-        fresh = self.model.show_wave(*slot, now=self._clock())
+        levels, locked, glow, timer = slot
+        fresh = self.model.show_wave(levels, locked, glow, self._clock(), timer)
         self._surface.present(fresh)
 
     def hide(self, after: float = 0.0) -> None:

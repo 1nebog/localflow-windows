@@ -263,3 +263,41 @@ def test_exe_icon_has_all_sizes():
     assert sizes == [16, 32, 256]
     first_offset = struct.unpack("<I", data[6 + 12:6 + 16])[0]
     assert data[first_offset:first_offset + 8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_timer_sits_at_the_right_edge_and_leaves_room_for_text():
+    r = PillRenderer(1.0)
+    m = PillModel()
+    m.show_wave([0.0] * N_BARS, False, "blue", 0.0, timer="12:05")
+    buf = r.render(m, 1.0, fake_text)
+    cy = r.pad + r.h // 2
+    right = buf[cy, r.pad + r.w - 20, :3].max()      # цифры справа в капсуле
+    left = buf[cy, r.pad + 20, :3].max()             # слева пусто
+    assert right > 80 and left < 60
+    # без таймера в этом месте темно
+    m2 = PillModel()
+    m2.show_wave([0.0] * N_BARS, False, "blue", 0.0)
+    assert r.render(m2, 1.0, fake_text)[cy, r.pad + r.w - 20, :3].max() < 60
+
+
+def test_long_text_shrinks_more_when_timer_is_shown():
+    r = PillRenderer(1.0)
+    wide = r.text_px("Причёсываю…", fake_text).shape[1]
+    narrow = r.text_px("Причёсываю…", fake_text, reserved=60).shape[1]
+    assert narrow <= wide
+
+
+def test_timer_reaches_the_pill_through_the_controller():
+    shown = []
+
+    class Surface:
+        def present(self, fresh):
+            shown.append((c.model.timer, c.model.mode))
+
+        def withdraw(self):
+            pass
+
+    c = PillController(lambda fn: fn(), Surface(), clock=lambda: 1.0)
+    c.show_wave([0.1] * N_BARS, timer="0:07")
+    c.show_text("Распознаю…", timer="0:03")
+    assert shown == [("0:07", "wave"), ("0:03", "text")]
