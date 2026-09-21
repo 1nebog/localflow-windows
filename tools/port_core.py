@@ -50,6 +50,8 @@ EXCLUDE = {
     "ICON_IDLE", "ICON_RECORDING", "ICON_PROCESSING", "ICON_LOADING", "_APP",
     # панель переносится отдельным модулем
     "PANEL_STRINGS", "PANEL_HTML",
+    # версия, ссылка и «Что нового» у Mac свои (у Windows — news.py)
+    "APP_VERSION", "APP_PAGE_URL", "MAC_NEWS",
 }
 
 # (шаблон, замена, сколько раз обязано встретиться). Шаблоны нарочно общие:

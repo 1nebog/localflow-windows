@@ -15,7 +15,7 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import __version__, core, menu, panel, strings, updates
+from . import __version__, core, menu, news, panel, strings, updates
 from .audio import AudioRecorder
 from .autotune import START_MODEL, AutoTune
 from .core import tr
@@ -399,7 +399,7 @@ class App:
         except Exception as exc:
             log.warning("Не открылась ссылка %s: %s", url, exc)
 
-    def open_panel(self) -> None:
+    def open_panel(self, tab: str = "settings") -> None:
         from .win import panel_window
 
         if self.panel_server is None:
@@ -409,7 +409,7 @@ class App:
         if self.panel_window is None:
             self.panel_window = panel_window.PanelWindow(DATA_DIR / "panel")
         try:
-            self.panel_window.open(self.panel_server.url + "#settings")
+            self.panel_window.open(self.panel_server.url + "#" + tab)
         except Exception as exc:
             log.error("Панель не открылась: %s", exc)
 
@@ -531,7 +531,12 @@ class App:
         threading.Thread(target=self._load_model, daemon=True, name="model-loader").start()
         threading.Thread(target=self._idle_loop, daemon=True, name="idle").start()
         self.pill.prewarm()
-        if FROZEN and not self.cfg.get("intro_shown"):
+        if news.show_after_start(self.cfg, __version__):
+            # только что обновились: сразу видно, что поменялось
+            core.save_config(self.cfg)
+            if FROZEN:
+                self.ui.after(1.0, lambda: self.open_panel("news"))
+        elif FROZEN and not self.cfg.get("intro_shown"):
             # первый запуск после установки: сразу видно клавишу и загрузку модели
             self.cfg["intro_shown"] = True
             core.save_config(self.cfg)

@@ -81,7 +81,7 @@ def test_first_download_shows_percent(tmp_path):
     app, _ = make_app(tmp_path, started=False, download=("base", 30, 60))
     app.transcriber.is_ready = False
     assert menu.tray_state(app) == "loading"
-    assert menu.status_text(app) == "Скачиваю модель base… 50%"
+    assert menu.status_text(app) == "Скачиваю модель Base… 50%"
 
 
 def test_model_error_and_sleeping_model(tmp_path):
@@ -99,7 +99,7 @@ def test_background_switch_keeps_working_icon(tmp_path):
     app, _ = make_app(tmp_path)
     app.autotune.status = "switch:large-v3-turbo"
     assert menu.tray_state(app) == "idle"
-    assert menu.status_text(app) == "Перехожу на модель large turbo…"
+    assert menu.status_text(app) == "Перехожу на модель Large Turbo…"
 
 
 def test_menu_layout_and_actions(tmp_path):
@@ -112,10 +112,10 @@ def test_menu_layout_and_actions(tmp_path):
     assert labels[-2:] == ["Пауза", "Выход"]
 
     models = find(items, "Модель").children
-    assert models[0].label == "Авто · small" and models[0].checked
+    assert models[0].label == "Авто · Small" and models[0].checked
     size = WHISPER_MODELS["medium"].size_mb
-    assert find(models, "medium").label == f"medium · {size} МБ"   # не скачана
-    find(models, "tiny").action()
+    assert find(models, "Medium").label == f"Medium · {size} МБ"   # не скачана
+    find(models, "Tiny").action()
     models[0].action()
 
     langs = find(items, "Язык").children
@@ -145,7 +145,7 @@ def test_manual_model_is_checked(tmp_path):
     app.autotune.auto = False
     models = find(menu.build(app), "Модель").children
     assert models[0].label == "Авто" and not models[0].checked
-    assert find(models, "small").checked
+    assert find(models, "Small").checked
 
 
 def test_history_items(tmp_path):

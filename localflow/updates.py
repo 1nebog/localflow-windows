@@ -25,6 +25,7 @@ log = logging.getLogger("localflow")
 
 REPO = "1nebog/localflow-windows"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+PAGE_URL = f"https://github.com/{REPO}"
 RELEASES_URL = f"https://github.com/{REPO}/releases/latest"
 _TRUSTED = f"https://github.com/{REPO}/releases/"
 

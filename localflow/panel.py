@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import __version__, core, icons, menu, updates
+from . import __version__, core, icons, menu, news, updates
 from .core import MODEL_LABELS, PILL_ANIMATIONS, STYLES, TRANSLATE_TARGETS, lang_label, tr
 from .engine.catalog import WHISPER_MODELS
 from .engine.download import is_ready
@@ -53,13 +53,15 @@ PANEL_STRINGS = {
         "set_llm": "Умное исправление", "llm_needed": "Нужно умное исправление",
         "set_media": "Пауза музыки при записи",
         "set_profiles": "Программы", "prof_hint": "Свои настройки для отдельных программ.",
-        "ph_app": "Программа", "opt_default": "(как везде)",
+        "ph_app": "Программа", "opt_default": "Как везде",
         "search": "Поиск…", "clear_all": "Очистить всё",
         "empty_history": "Пока пусто — надиктуй что-нибудь 🎙",
         "copy": "Копировать", "delete": "Удалить", "confirm_clear": "Удалить всю историю?",
-        "hint_dict": "Как слышится → как надо писать. Меняется на лету.",
+        "hint_dict": "Если слово выходит с ошибкой — впиши, как его писать. Работает сразу.",
         "hint_snip": "Скажи фразу целиком — вставится текст.",
-        "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "замена",
+        "ph_trigger": "Фраза", "ph_text": "Текст", "ph_heard": "Как получается", "ph_repl": "Как надо",
+        "tab_news": "Что нового", "news_current": "у тебя сейчас",
+        "set_github": "Страница на GitHub", "github_note": "Описание и все версии", "github_open": "Открыть",
         "set_updates": "Обновления", "upd_check": "Проверить", "upd_checking": "Проверяю…", "upd_version": "Версия {v}", "upd_latest": "Последняя версия ✓", "upd_available": "Есть версия {v}", "upd_get": "Обновить", "upd_manual": "Скачать вручную", "upd_downloading": "Скачиваю… {p}%", "upd_installing": "Ставлю — LocalFlow сейчас перезапустится", "upd_failed": "Не получилось обновить", "upd_error": "Не удалось проверить — нет интернета?",
         "add": "+ Добавить", "offline": "LocalFlow не запущен", "locale": "ru-RU",
     },
@@ -85,13 +87,15 @@ PANEL_STRINGS = {
         "set_llm": "Smart correction", "llm_needed": "Needs smart correction",
         "set_media": "Pause music while recording",
         "set_profiles": "Apps", "prof_hint": "Separate settings for specific apps.",
-        "ph_app": "App", "opt_default": "(same as global)",
+        "ph_app": "App", "opt_default": "Same as everywhere",
         "search": "Search…", "clear_all": "Clear all",
         "empty_history": "Nothing yet — dictate something 🎙",
         "copy": "Copy", "delete": "Delete", "confirm_clear": "Delete all history?",
-        "hint_dict": "As heard → as it should be written. Applies instantly.",
+        "hint_dict": "If a word comes out wrong, write how it should be spelled. Works right away.",
         "hint_snip": "Say the whole phrase — the text is inserted.",
-        "ph_trigger": "phrase", "ph_text": "text", "ph_repl": "replacement",
+        "ph_trigger": "Phrase", "ph_text": "Text", "ph_heard": "Comes out as", "ph_repl": "Should be",
+        "tab_news": "What's new", "news_current": "you have this",
+        "set_github": "GitHub page", "github_note": "About and all versions", "github_open": "Open",
         "set_updates": "Updates", "upd_check": "Check", "upd_checking": "Checking…", "upd_version": "Version {v}", "upd_latest": "Up to date ✓", "upd_available": "Version {v} is out", "upd_get": "Update", "upd_manual": "Download manually", "upd_downloading": "Downloading… {p}%", "upd_installing": "Installing — LocalFlow will restart", "upd_failed": "Update failed", "upd_error": "Couldn't check — no internet?",
         "add": "+ Add", "offline": "LocalFlow isn't running", "locale": "en-US",
     },
@@ -117,13 +121,15 @@ PANEL_STRINGS = {
         "set_llm": "Розумне виправлення", "llm_needed": "Потрібне розумне виправлення",
         "set_media": "Пауза музики під час запису",
         "set_profiles": "Програми", "prof_hint": "Свої налаштування для окремих програм.",
-        "ph_app": "Програма", "opt_default": "(як усюди)",
+        "ph_app": "Програма", "opt_default": "Як усюди",
         "search": "Пошук…", "clear_all": "Очистити все",
         "empty_history": "Поки порожньо — надиктуй щось 🎙",
         "copy": "Копіювати", "delete": "Видалити", "confirm_clear": "Видалити всю історію?",
-        "hint_dict": "Як чується → як треба писати. Застосовується одразу.",
+        "hint_dict": "Якщо слово виходить з помилкою — впиши, як його писати. Працює одразу.",
         "hint_snip": "Скажи фразу цілком — вставиться текст.",
-        "ph_trigger": "фраза", "ph_text": "текст", "ph_repl": "заміна",
+        "ph_trigger": "Фраза", "ph_text": "Текст", "ph_heard": "Як виходить", "ph_repl": "Як треба",
+        "tab_news": "Що нового", "news_current": "у тебе зараз",
+        "set_github": "Сторінка на GitHub", "github_note": "Опис і всі версії", "github_open": "Відкрити",
         "set_updates": "Оновлення", "upd_check": "Перевірити", "upd_checking": "Перевіряю…", "upd_version": "Версія {v}", "upd_latest": "Остання версія ✓", "upd_available": "Є версія {v}", "upd_get": "Оновити", "upd_manual": "Завантажити вручну", "upd_downloading": "Завантажую… {p}%", "upd_installing": "Встановлюю — LocalFlow зараз перезапуститься", "upd_failed": "Не вдалося оновити", "upd_error": "Не вдалося перевірити — немає інтернету?",
         "add": "+ Додати", "offline": "LocalFlow не запущено", "locale": "uk-UA",
     },
@@ -149,13 +155,15 @@ PANEL_STRINGS = {
         "set_llm": "Intelligente Korrektur", "llm_needed": "Braucht intelligente Korrektur",
         "set_media": "Musik beim Aufnehmen pausieren",
         "set_profiles": "Programme", "prof_hint": "Eigene Einstellungen für einzelne Programme.",
-        "ph_app": "Programm", "opt_default": "(wie überall)",
+        "ph_app": "Programm", "opt_default": "Wie überall",
         "search": "Suchen…", "clear_all": "Alles löschen",
         "empty_history": "Noch leer — diktiere etwas 🎙",
         "copy": "Kopieren", "delete": "Löschen", "confirm_clear": "Gesamten Verlauf löschen?",
-        "hint_dict": "Wie gehört → wie es geschrieben werden soll. Gilt sofort.",
+        "hint_dict": "Kommt ein Wort falsch heraus, trag ein, wie es geschrieben wird. Gilt sofort.",
         "hint_snip": "Sag die ganze Phrase — der Text wird eingefügt.",
-        "ph_trigger": "Phrase", "ph_text": "Text", "ph_repl": "Ersetzung",
+        "ph_trigger": "Phrase", "ph_text": "Text", "ph_heard": "Kommt heraus als", "ph_repl": "Richtig",
+        "tab_news": "Neu", "news_current": "deine Version",
+        "set_github": "GitHub-Seite", "github_note": "Beschreibung und alle Versionen", "github_open": "Öffnen",
         "set_updates": "Updates", "upd_check": "Prüfen", "upd_checking": "Prüfe…", "upd_version": "Version {v}", "upd_latest": "Aktuell ✓", "upd_available": "Version {v} ist da", "upd_get": "Aktualisieren", "upd_manual": "Manuell herunterladen", "upd_downloading": "Lade… {p}%", "upd_installing": "Installiere — LocalFlow startet neu", "upd_failed": "Update fehlgeschlagen", "upd_error": "Prüfen fehlgeschlagen — kein Internet?",
         "add": "+ Hinzufügen", "offline": "LocalFlow läuft nicht", "locale": "de-DE",
     },
@@ -242,6 +250,7 @@ def snapshot(app, mics: list[dict] | None = None) -> dict:
         "snippets": core.read_pairs(core.SNIPPETS_PATH),
         "stats": core.stats_summary(),
         "version": __version__,
+        "news": news.for_lang(core._UI_LANG),
     }
 
 
@@ -501,6 +510,9 @@ class PanelServer:
         if path == "/api/update/install":
             # ставим только то, что сами нашли при проверке, а не адрес со страницы
             return {"ok": bool(app.start_update(self._update_info))}
+        if path == "/api/github":
+            self.call(lambda: app.open_url(updates.PAGE_URL))
+            return {"ok": True}
         if path == "/api/update/open":
             url = updates.safe_url((self._update_info or {}).get("url"))
             self.call(lambda: app.open_url(url))
@@ -683,7 +695,18 @@ textarea{resize:vertical;min-height:34px}
 select:disabled{opacity:.55;cursor:default}
 kbd{font:600 13px "Segoe UI",system-ui,sans-serif;background:var(--bg);border:1px solid var(--border);
   border-bottom-width:2px;border-radius:6px;padding:4px 10px;white-space:nowrap}
+kbd{display:inline-block}
+kbd::first-letter{text-transform:uppercase}
 kbd.wait{color:var(--accent);border-color:var(--accent);animation:blink 1.2s infinite}
+.news{margin-bottom:10px;display:block}
+.news h3{font-size:14px;margin:0 0 6px;display:flex;gap:8px;align-items:center}
+.news .now{font-size:11.5px;font-weight:600;color:var(--accent);background:var(--bg);
+  border-radius:6px;padding:1px 7px}
+.news ul{margin:0;padding-left:18px}
+.news li{margin:3px 0}
+/* смена темы — мягкий перелив, а не вспышка */
+::view-transition-old(root),::view-transition-new(root){animation-duration:.45s;animation-timing-function:ease}
+html.theming,html.theming *{transition:background-color .45s ease,color .45s ease,border-color .45s ease!important}
 @keyframes blink{50%{opacity:.45}}
 .switch{position:relative;width:40px;height:22px;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0}
@@ -710,6 +733,7 @@ kbd.wait{color:var(--accent);border-color:var(--accent);animation:blink 1.2s inf
   <div class="tab" data-tab="dict"></div>
   <div class="tab" data-tab="snippets"></div>
   <div class="tab" data-tab="stats"></div>
+  <div class="tab" data-tab="news"></div>
 </div>
 <div id="content"></div>
 <datalist id="apps"></datalist>
@@ -745,11 +769,15 @@ function applyTheme(){
 }
 mq.onchange=applyTheme;
 $('#themeBtn').onclick=()=>{theme=theme==='auto'?'light':theme==='light'?'dark':'auto';
-  try{localStorage.setItem('lf-theme',theme);}catch(e){} applyTheme();};
+  try{localStorage.setItem('lf-theme',theme);}catch(e){}
+  if(document.startViewTransition&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+    document.startViewTransition(applyTheme);return;}
+  const h=document.documentElement;h.classList.add('theming');applyTheme();
+  clearTimeout(applyTheme.t);applyTheme.t=setTimeout(()=>h.classList.remove('theming'),500);};
 applyTheme();
 
 /* вкладки */
-const TABS=['settings','history','dict','snippets','stats'];
+const TABS=['settings','history','dict','snippets','stats','news'];
 let tab=location.hash.slice(1);
 if(!TABS.includes(tab))tab='settings';
 function setTab(t){tab=t;history.replaceState(null,'','#'+t);
@@ -823,7 +851,7 @@ function renderPairs(kind){
     rows.innerHTML='';
     pairs.forEach((p,i)=>{
       const r=document.createElement('div');r.className='row';
-      r.innerHTML=`<input value="${esc(p[0])}" placeholder="${multi?L.ph_trigger:L.ph_trigger}">
+      r.innerHTML=`<input value="${esc(p[0])}" placeholder="${multi?L.ph_trigger:L.ph_heard}">
         <span class="arrow">→</span>
         ${multi?`<textarea rows="1" placeholder="${L.ph_text}">${esc(p[1].replaceAll('\\n','\n'))}</textarea>`
                :`<input value="${esc(p[1])}" placeholder="${L.ph_repl}">`}
@@ -902,6 +930,8 @@ function renderSettings(){
       <button class="btn link" id="updManual" hidden>${L.upd_manual}</button>
       <button class="btn" id="updGet" hidden>${L.upd_get}</button>
       <button class="btn ghost" id="updBtn">${L.upd_check}</button></div>`+
+    `<div class="set-row"><span class="name">${L.set_github}<div class="note">${L.github_note}</div></span>
+      <button class="btn ghost" id="ghBtn">${L.github_open}</button></div>`+
     `</div><div class="sec-title">${L.set_profiles}</div><div class="hint">${L.prof_hint}</div>
      <div id="profiles"></div><button class="btn ghost" id="addProf">${L.add}</button>`;
 
@@ -945,6 +975,7 @@ function renderSettings(){
     b.disabled=false;b.textContent=L.upd_check;
   };
   $('#updManual').onclick=()=>api('/api/update/open',{});
+  $('#ghBtn').onclick=()=>api('/api/github',{});
   $('#updGet').onclick=async()=>{
     $('#updGet').hidden=$('#updBtn').hidden=true;updNote(L.upd_downloading.replace('{p}',0));
     let r;try{r=await api('/api/update/install',{});}catch(e){r={ok:false};}
@@ -1008,11 +1039,17 @@ function renderSettings(){
     box.lastElementChild.querySelector('input').focus();};
 }
 
+function renderNews(){
+  $('#content').innerHTML=DATA.news.map(n=>`<div class="card news"><h3>${esc(L.upd_version.replace('{v}',n.v))}`+
+    (n.v===DATA.version?` <span class="now">${L.news_current}</span>`:'')+
+    `</h3><ul>${n.items.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div>`).join('');
+}
 function render(){
   if(hkTimer&&tab!=='settings'){clearInterval(hkTimer);hkTimer=null;api('/api/hotkey/cancel',{});}
   if(tab==='history')renderHistory();
   else if(tab==='stats')renderStats();
   else if(tab==='settings')renderSettings();
+  else if(tab==='news')renderNews();
   else renderPairs(tab);
 }
 refreshState();

@@ -35,11 +35,11 @@ MODELS = ["tiny", "base", "small", "medium", "large-v3-turbo"]
 
 # Красивые имена моделей для меню (внутри остаются технические ключи)
 MODEL_LABELS = {
-    "tiny": "tiny",
-    "base": "base",
-    "small": "small",
-    "medium": "medium",
-    "large-v3-turbo": "large turbo",
+    "tiny": "Tiny",
+    "base": "Base",
+    "small": "Small",
+    "medium": "Medium",
+    "large-v3-turbo": "Large Turbo",
 }
 
 # Анимации свечения таблетки (выбираются в меню)

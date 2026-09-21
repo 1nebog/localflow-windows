@@ -82,7 +82,7 @@ def test_snapshot(tmp_path):
     data = json.loads(json.dumps(panel.snapshot(app), ensure_ascii=False))
     st, opt = data["settings"], data["options"]
     assert st["hotkey"] == "правый Ctrl" and st["hotkey_default"]
-    assert st["model"] == "auto" and opt["model"][0] == ["auto", "Авто · base"]
+    assert st["model"] == "auto" and opt["model"][0] == ["auto", "Авто · Base"]
     assert opt["mic"] == [["", "Как в системе"], ["USB Mic", "USB Mic"]]
     assert ["0", "Никогда"] in opt["idle_unload_min"] and st["idle_unload_min"] == "10"
     assert st["llm_mode"] == "off" and st["pause_media"] is True
@@ -333,3 +333,14 @@ def test_update_by_button_inside_the_app(server):
     assert calls == [("start_update", info), ("open_url", exe)]
     assert request(srv, "/api/update/install", {}, key=False)[0] == 403
     assert json.loads(request(srv, "/api/all")[1])["version"]
+
+
+def test_news_and_github_page(server):
+    srv, app, calls = server
+    code, body = request(srv, "/api/all")
+    data = json.loads(body)
+    assert code == 200 and data["news"][0]["v"] == data["version"]
+    assert data["news"][0]["items"]
+    code, body = request(srv, "/api/github", {})
+    assert code == 200 and json.loads(body) == {"ok": True}
+    assert ("open_url", "https://github.com/1nebog/localflow-windows") in calls
