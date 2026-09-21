@@ -418,15 +418,15 @@ _DICT_HEADER = """\
 #
 # Одна строка — одна замена, формат простой:
 #
-#     как слышится = как надо писать
+#     Как получается = как надо писать
 #
 # Никаких скобок и кавычек не нужно. Строки, начинающиеся
 # с #, — комментарии, они игнорируются. Сохрани файл (Ctrl+S) —
 # замены заработают сразу, перезапуск не нужен.
 # ══════════════════════════════════════════════════════
 
-локал флоу = LocalFlow
-виспер = Whisper
+Локал флоу = LocalFlow
+Виспер = Whisper
 """
 
 def ensure_dictionary() -> None:
@@ -580,6 +580,11 @@ def save_history(items: list[dict]) -> None:
     except OSError as exc:
         logging.getLogger("localflow").warning("История не сохранилась: %s", exc)
 
+def cap_first(s: str) -> str:
+    """Первая буква заглавная — так аккуратнее в панели. Замены и сниппеты
+    сравниваются без учёта регистра, поэтому на работу это не влияет."""
+    return s[:1].upper() + s[1:]
+
 def read_pairs(path: Path) -> list[list[str]]:
     """Читает пары «ключ = значение» из простого текстового файла."""
     pairs = []
@@ -592,7 +597,7 @@ def read_pairs(path: Path) -> list[list[str]]:
                 k, _, v = line.partition("=")
                 k, v = k.strip(), v.strip()
                 if k and v:
-                    pairs.append([k, v])
+                    pairs.append([cap_first(k), v])
     except OSError:
         pass
     return pairs
@@ -605,7 +610,7 @@ def write_pairs(path: Path, pairs: list, header: str) -> None:
     )
     lines = [comment.rstrip("\n")]
     for k, v in pairs:
-        k, v = str(k).strip(), str(v).strip()
+        k, v = cap_first(str(k).strip()), str(v).strip()
         if k and v:
             lines.append(f"{k} = {v}")
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)

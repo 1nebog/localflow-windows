@@ -5,6 +5,12 @@
 """
 
 NEWS = [
+    ("0.1.7", {
+        "ru": ["Слова в словаре и сниппетах — с заглавной буквы"],
+        "en": ["Dictionary and snippet entries start with a capital letter"],
+        "uk": ["Слова в словнику і сніпетах — з великої літери"],
+        "de": ["Einträge in Wörterbuch und Snippets beginnen mit Großbuchstaben"],
+    }),
     ("0.1.6", {
         "ru": ["Вкладка «Что нового» — после обновления открывается сама",
                "Кнопка на страницу программы на GitHub: «Настройки» → «Программа»",

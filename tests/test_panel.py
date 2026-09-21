@@ -263,9 +263,12 @@ def test_api_reads_and_changes(server):
 def test_api_writes_dictionary(server):
     srv, _, _ = server
     request(srv, "/api/dict", {"pairs": [["локал флоу", "LocalFlow"], ["", "пусто"]]})
-    assert core.read_pairs(core.DICTIONARY_PATH) == [["локал флоу", "LocalFlow"]]
+    # слева всегда с заглавной, а замена по-прежнему срабатывает на любой регистр
+    assert core.read_pairs(core.DICTIONARY_PATH) == [["Локал флоу", "LocalFlow"]]
+    assert core.apply_dictionary("запусти локал флоу") == "запусти LocalFlow"
     request(srv, "/api/snippets", {"pairs": [["моя подпись", "С уважением,\\nИмя"]]})
-    assert core.read_pairs(core.SNIPPETS_PATH) == [["моя подпись", "С уважением,\\nИмя"]]
+    assert core.read_pairs(core.SNIPPETS_PATH) == [["Моя подпись", "С уважением,\\nИмя"]]
+    assert core.apply_snippet("моя подпись") == "С уважением,\nИмя"
     assert str(core.DICTIONARY_PATH).startswith(__import__("os").environ["LOCALFLOW_HOME"])
 
 
