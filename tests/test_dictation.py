@@ -86,6 +86,10 @@ class FakeTranscriber:
         self.snippets = 0
         self.pieces = []             # длины кусков длинной диктовки
         self.finished = None
+        self.sessions = 0            # сколько раз язык сбрасывался на новую диктовку
+
+    def start_session(self):
+        self.sessions += 1
 
     def transcribe(self, audio):
         self.calls += 1
@@ -589,3 +593,48 @@ def test_music_paused_for_recording(dp):
     dp.recorder.fail = True
     dp.on_key_event(HOTKEY_DOWN)
     assert dp.media.events[-2:] == ["pause", "resume"]
+
+
+def test_silent_tail_is_not_recognized(d, monkeypatch):
+    """Хвост длинной диктовки после последнего куска — тишина. Отдавать его
+    Whisper нельзя: на тишине он выдумывает фразы («Доктор к самому обожаю»)."""
+    monkeypatch.setattr(Dictation, "PARTIAL_AFTER_SEC", 0.05)
+    monkeypatch.setattr(Dictation, "PARTIAL_MIN_SEC", 1.0)
+    monkeypatch.setattr(Dictation, "PARTIAL_PAUSE", 0.1)
+    monkeypatch.setattr(Dictation, "LOCK_AUTOSTOP", 0.6)
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    d.recorder.audio = np.concatenate([voice(40.0), np.zeros(int(20 * SR), np.float32)])
+    d.recorder.heard = SR * 40
+    hold(d, 0.05)
+    d.recorder.level = 0.3
+    time.sleep(0.2)
+    d.recorder.level = 0.0
+    assert wait(lambda: d.transcriber.pieces, timeout=2)
+    assert wait(lambda: d.paste.pasted, timeout=5)
+    assert d.transcriber.pieces == [40.0]          # молчаливый хвост не гоняли
+    assert d.paste.pasted[0][0] == "часть1"
+
+
+def test_silent_piece_is_skipped(d, monkeypatch):
+    """Пауза длиной в целый кусок — не речь, распознавать нечего."""
+    monkeypatch.setattr(Dictation, "PARTIAL_AFTER_SEC", 0.05)
+    monkeypatch.setattr(Dictation, "PARTIAL_MIN_SEC", 1.0)
+    monkeypatch.setattr(Dictation, "PARTIAL_PAUSE", 0.1)
+    monkeypatch.setattr(Dictation, "LOCK_AUTOSTOP", 0.6)
+    monkeypatch.setattr(Dictation, "VOICE_CANCEL_TRIES", 0)
+    d.recorder.audio = np.zeros(int(60 * SR), np.float32)
+    d.recorder.heard = SR * 40
+    hold(d, 0.05)
+    d.recorder.level = 0.3
+    time.sleep(0.2)
+    d.recorder.level = 0.0
+    time.sleep(0.5)
+    assert d.transcriber.pieces == []
+
+
+def test_each_dictation_detects_language_anew(d):
+    hold(d)
+    assert wait(lambda: d.paste.pasted)
+    hold(d)
+    assert wait(lambda: len(d.paste.pasted) == 2)
+    assert d.transcriber.sessions == 2

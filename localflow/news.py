@@ -5,6 +5,16 @@
 """
 
 NEWS = [
+    ("0.1.8", {
+        "ru": ["Длинная диктовка больше не уезжает на другой язык: язык записи определяется один раз",
+               "В паузах и в тишине программа больше не выдумывает фразы"],
+        "en": ["Long dictations no longer drift to another language: it is detected once per recording",
+               "No more invented phrases during pauses and silence"],
+        "uk": ["Довге диктування більше не з'їжджає на іншу мову: мова визначається один раз за запис",
+               "У паузах і в тиші програма більше не вигадує фрази"],
+        "de": ["Lange Diktate wechseln nicht mehr die Sprache: sie wird einmal pro Aufnahme erkannt",
+               "Keine erfundenen Sätze mehr bei Pausen und Stille"],
+    }),
     ("0.1.7", {
         "ru": ["Слова в словаре и сниппетах — с заглавной буквы"],
         "en": ["Dictionary and snippet entries start with a capital letter"],

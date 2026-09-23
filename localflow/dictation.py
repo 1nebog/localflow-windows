@@ -233,6 +233,7 @@ class Dictation:
     def _begin_recording(self) -> None:
         # Таблетка — первым делом: остальное занимает десятки миллисекунд
         self.indicator.show_text(tr("speak"), glow="blue")
+        self.transcriber.start_session()   # язык определим заново
         self._active_app = self._frontmost_app()
         self._active_title = self._window_title()
         self._wake_models()
@@ -383,6 +384,12 @@ class Dictation:
                 self._spec_running.clear()
         threading.Thread(target=run, daemon=True, name="speculative").start()
 
+    def _has_speech(self, audio) -> bool:
+        """Есть ли в куске речь. На тишине Whisper выдумывает слова —
+        такие куски не отдаём ему вовсе."""
+        return bool(len(audio)) and (
+            (np.abs(audio) > self.SILENCE_PEAK).sum() >= SAMPLE_RATE * 0.3)
+
     def _start_partial(self) -> None:
         """Разобрать очередной кусок длинной записи в фоне."""
         full = self.recorder.snapshot()
@@ -390,6 +397,9 @@ class Dictation:
         if (n - self._partial_n) / SAMPLE_RATE < self.PARTIAL_MIN_SEC:
             return
         piece = full[self._partial_n:n]
+        if not self._has_speech(piece):
+            self._partial_n = n          # пауза, а не речь — разбирать нечего
+            return
         self._spec_running.set()
 
         def run():
@@ -640,7 +650,7 @@ class Dictation:
             prefix, tail = self._tail_after_partials(full, start, end)
             if prefix:
                 raw_tail = (self.transcriber.raw_text(tail)
-                            if tail is not None and len(tail) > SAMPLE_RATE * 0.4 else "")
+                            if tail is not None and self._has_speech(tail) else "")
                 text = self.transcriber.finish_text(f"{prefix} {raw_tail}".strip())
             elif spec is not None and spec["done"].wait(120) and spec["text"] is not None:
                 text = spec["text"]

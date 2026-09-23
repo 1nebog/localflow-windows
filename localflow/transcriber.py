@@ -51,6 +51,11 @@ class Transcriber:
         self.model_name = model_name
         self.language = DEFAULT_LANGUAGE
         self.last_language = "ru"  # язык последней фразы (для стиля «Письмо»)
+        # Язык текущей диктовки при «Определять сам»: определяется один раз,
+        # на первом же куске, и держится до конца записи. Иначе длинная
+        # диктовка, которая разбирается кусками, могла посреди фразы
+        # «переехать» на другой язык — и человек получал перевод.
+        self.session_language = None
         # Последний результат — дословная вставка (сниппет/команда редактора):
         # такой текст умное исправление не трогает
         self.last_verbatim = False
@@ -327,6 +332,20 @@ class Transcriber:
             log.warning("Спасение хвоста не удалось: %s", exc)
             return text
 
+    def start_session(self) -> None:
+        """Новая диктовка: язык определим заново на первом куске."""
+        self.session_language = None
+
+    def _session_lang(self):
+        """Язык, которым распознаём сейчас: выбранный руками или уже
+        определённый на этой диктовке. None — определять."""
+        return self.language if self.language != "auto" else self.session_language
+
+    def _remember_language(self, detected: str) -> None:
+        if self.language == "auto" and not self.session_language and detected:
+            self.session_language = detected
+            log.info("Язык диктовки: %s (держим до конца записи)", detected)
+
     def raw_text(self, audio: np.ndarray) -> str:
         """Сырой текст куска: без словаря, сниппетов и команд редактора.
 
@@ -336,14 +355,18 @@ class Transcriber:
         """
         if not self._ready:
             raise RuntimeError("Модель ещё не загружена")
-        lang = None if self.language == "auto" else self.language
-        prompt = build_initial_prompt(self.language, self.hint_terms)
+        lang = self._session_lang()
+        prompt = build_initial_prompt(lang or self.language, self.hint_terms)
         t0 = time.monotonic()
         result = self._decode(audio, lang, prompt)
         raw = self._recover_tail(audio, result, result["text"].strip(), lang)
-        self.last_language = result.get("language") or lang or "ru"
-        log.info("Кусок %.0f c распознан за %.1f c: %r",
-                 len(audio) / SAMPLE_RATE, time.monotonic() - t0, raw[-80:])
+        # Заданный язык главнее ответа движка: если мы попросили русский,
+        # то и чистим текст как русский, что бы движок ни ответил
+        self.last_language = lang or result.get("language") or "ru"
+        self._remember_language(self.last_language)
+        log.info("Кусок %.0f c распознан за %.1f c (язык: %s): %r",
+                 len(audio) / SAMPLE_RATE, time.monotonic() - t0,
+                 self.last_language, raw[-80:])
         return strip_prompt_echo(raw)
 
     def finish_text(self, raw_text: str) -> str:
@@ -371,10 +394,10 @@ class Transcriber:
         if not self._ready:
             raise RuntimeError("Модель ещё не загружена")
 
-        lang = None if self.language == "auto" else self.language
+        lang = self._session_lang()
         # hint_terms — имена из заголовка окна и автословарь из истории:
         # подсказываем Whisper написание слов, которые он иначе перевирает
-        prompt = build_initial_prompt(self.language, self.hint_terms)
+        prompt = build_initial_prompt(lang or self.language, self.hint_terms)
         t0 = time.monotonic()
         result = self._decode(audio, lang, prompt)
         raw_text = result["text"].strip()
@@ -383,8 +406,9 @@ class Transcriber:
         # человек сказал после, пропадает молча.
         raw_text = self._recover_tail(audio, result, raw_text, lang)
         # Чистим по языку, который реально определился в этой фразе
-        detected = result.get("language") or lang or "ru"
+        detected = lang or result.get("language") or "ru"
         self.last_language = detected
+        self._remember_language(detected)
         # Эхо подсказки в начале («Английские слова пишем as is…») — не речь
         text = strip_prompt_echo(raw_text)
         # Остатки петли (страховка, если проскочит) — вырезаем хвост целиком
@@ -438,7 +462,7 @@ class Transcriber:
         lang = None if self.language == "auto" else self.language
         prompt = INITIAL_PROMPTS.get(self.language, INITIAL_PROMPTS["auto"])
         result = self._decode(audio, lang, prompt)
-        detected = result.get("language") or lang or "ru"
+        detected = lang or result.get("language") or "ru"
         self.last_language = detected
         paras: list[list[str]] = [[]]
         prev_end = None

@@ -216,3 +216,51 @@ def test_unload_stops_engine(make):
     server = t._server
     t.unload()
     assert not server.running and not t.is_ready
+
+
+def test_language_is_chosen_once_for_the_whole_dictation(make):
+    """Длинная диктовка разбирается кусками. Если язык определять на каждом
+    куске, середина русской речи может уехать на английский — человек
+    получает перевод. Определяем один раз и держим до конца записи."""
+    def script(sec, fields, n):
+        # движок «услышал» английский на втором куске
+        lang = "russian" if n == 1 else "english"
+        return {"language": lang, "segments": [
+            {"start": 0.0, "end": sec, "text": " Кусок."}]}
+
+    t = make(script)
+    t.language = "auto"
+    t.start_session()
+    t.raw_text(speech(5))
+    t.raw_text(speech(5))
+    t.raw_text(speech(5))
+    langs = [c["language"] for c in real_calls(t)]
+    assert langs == ["auto", "ru", "ru"]     # спросили один раз, дальше — держим
+    assert t.last_language == "ru"
+
+
+def test_new_dictation_detects_language_again(make):
+    def script(sec, fields, n):
+        return {"language": "english" if n > 1 else "russian",
+                "segments": [{"start": 0.0, "end": sec, "text": " Кусок."}]}
+
+    t = make(script)
+    t.language = "auto"
+    t.start_session()
+    t.raw_text(speech(5))
+    t.start_session()                        # новая диктовка
+    t.raw_text(speech(5))
+    assert [c["language"] for c in real_calls(t)] == ["auto", "auto"]
+    assert t.last_language == "en"
+
+
+def test_chosen_language_is_never_overridden(make):
+    def script(sec, fields, n):
+        return {"language": "english",
+                "segments": [{"start": 0.0, "end": sec, "text": " Кусок."}]}
+
+    t = make(script)                         # в make язык выставлен «ru» руками
+    t.start_session()
+    t.raw_text(speech(5))
+    t.raw_text(speech(5))
+    assert [c["language"] for c in real_calls(t)] == ["ru", "ru"]
