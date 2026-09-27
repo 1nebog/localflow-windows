@@ -31,7 +31,7 @@ import numpy as np
 from . import core, strings
 from .audio import DEAD_PEAK
 from .core import (
-    LANG_NAMES, MIN_DURATION_SEC, SAMPLE_RATE, SILENCE_PEAK_LEVEL, add_stats,
+    LANG_NAMES, MIN_DURATION_SEC, SAMPLE_RATE, SILENCE_PEAK_LEVEL, SilenceWatch, add_stats,
     casual_tone, clear_recovery, email_tone, extract_rewrite_cmd, extract_translate_cmd,
     fmt_elapsed, is_hallucination, is_messenger_app, is_voice_cancel, load_recovery,
     notes_tone, prune_history, save_history, save_recovery, structure_by_voice,
@@ -276,25 +276,20 @@ class Dictation:
     def _level_loop(self) -> None:
         """Волна в таблетке, цвет по тишине, голосовая отмена, автостоп замка."""
         wave = deque([0.0] * N_BARS, maxlen=N_BARS)
-        last_voice = time.monotonic()
+        watch = SilenceWatch(time.monotonic())
         cancel_checks = 0
         last_cancel_check = 0.0
         last_hint = None
-        floor = None
         while self.recorder.is_recording:
             lvl = self.recorder.level
-            if floor is None or lvl < floor:
-                floor = lvl
-            else:
-                floor += (lvl - floor) * self.NOISE_RISE
-            self._noise_floor = floor
-            thr = min(self.SPEECH_LEVEL_MAX, max(self.SPEECH_LEVEL, floor * self.SPEECH_MARGIN))
-            if lvl > thr:
+            silent_for = watch.tick(lvl, time.monotonic())
+            self._noise_floor = watch.floor or 0.0
+            thr = watch.threshold
+            if watch.heard:
                 self._heard_speech = True
-                last_voice = time.monotonic()
+            if not silent_for:
                 cancel_checks = 0
                 self._spec = None            # заговорил снова — заготовка устарела
-            silent_for = time.monotonic() - last_voice
             if (self._heard_speech and silent_for > self.PARTIAL_PAUSE
                     and self.transcriber.is_ready and not self._busy
                     and not self._spec_running.is_set()
@@ -317,8 +312,9 @@ class Dictation:
                                  name="voice-cancel").start()
             if self._locked and silent_for > self.LOCK_AUTOSTOP:
                 if self._heard_speech:
-                    log.info("Замок: %.0f c тишины после речи (фон %.4f, порог %.4f) — распознаю",
-                             self.LOCK_AUTOSTOP, floor or 0.0, thr)
+                    log.info("Замок: %.0f c тишины после речи (фон %.4f, порог %.4f, "
+                             "простой замеров %.1f c) — распознаю",
+                             self.LOCK_AUTOSTOP, watch.floor or 0.0, thr, watch.stalled)
                     self._locked = False
                     self._finish_recording()
                 else:

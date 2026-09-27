@@ -5,6 +5,16 @@
 """
 
 NEWS = [
+    ("0.1.9", {
+        "ru": ["Запись больше не обрывается на полуслове, если говоришь тихо",
+               "Пока программа занята, это время не считается тишиной"],
+        "en": ["Recording no longer cuts off mid-sentence when you speak quietly",
+               "Time when the app is busy no longer counts as silence"],
+        "uk": ["Запис більше не обривається на півслові, якщо говориш тихо",
+               "Поки програма зайнята, цей час не вважається тишею"],
+        "de": ["Die Aufnahme bricht nicht mehr mitten im Satz ab, wenn du leise sprichst",
+               "Zeit, in der das Programm beschäftigt ist, zählt nicht mehr als Stille"],
+    }),
     ("0.1.8", {
         "ru": ["Длинная диктовка больше не уезжает на другой язык: язык записи определяется один раз",
                "В паузах и в тишине программа больше не выдумывает фразы"],
