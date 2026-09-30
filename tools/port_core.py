@@ -47,7 +47,8 @@ EXCLUDE = {
     "WAKE_DEBOUNCE_SEC", "WAKE_RETRAIN_NEW", "WAKE_TRAIN_DIR",
     "WAKE_TRAIN_STATE",
     # иконки menu bar и ссылка на приложение
-    "ICON_IDLE", "ICON_RECORDING", "ICON_PROCESSING", "ICON_LOADING", "_APP",
+    "ICON_IDLE", "ICON_RECORDING", "ICON_PROCESSING", "ICON_LOADING",
+    "ICON_DOWNLOAD", "_APP",
     # панель переносится отдельным модулем
     "PANEL_STRINGS", "PANEL_HTML",
     # версия, ссылка и «Что нового» у Mac свои (у Windows — news.py)
