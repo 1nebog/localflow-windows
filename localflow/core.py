@@ -2158,7 +2158,15 @@ class SilenceWatch:
     """
 
     MARGIN = 2.5         # во сколько раз речь должна быть громче фона
-    LEVEL_ON = 0.02      # порог начала речи (пока человек ещё не заговорил)
+    LEVEL_ON = 0.006     # порог начала речи в тихой комнате (пока человек
+                         # ещё не заговорил); в шумной планка выше — по фону.
+                         # Было жёстко 0.02: тихий голос или ослабший после
+                         # обновления macOS микрофон его не перепрыгивали, и
+                         # таблетка всю диктовку висела на «Говорите…» без
+                         # волны и таймера, а через 2 c краснела.
+    START_TICKS = 2      # столько замеров подряд громче планки — это голос,
+                         # а не щелчок клавиши
+    FIRST_FLOOR_MAX = 0.02  # первый замер считаем фоном не выше этого
     LEVEL_MIN = 0.004    # ниже этого планку не опускаем даже в тишине
     LEVEL_MAX = 0.06     # выше не поднимаем — иначе съест тихую речь
     VOICE_SHARE = 0.12   # какая доля собственной громкости речи — уже тишина
@@ -2171,10 +2179,14 @@ class SilenceWatch:
         self.floor = None      # фон комнаты
         self.voice_ref = 0.0   # насколько громко говорит этот человек
         self.heard = False     # речь в этой записи уже была
+        self.heard_at = None   # через сколько секунд после старта услышали
+        self.peak = 0.0        # самый громкий замер (для журнала)
         self.threshold = self.LEVEL_ON
         self.stalled = 0.0     # сколько секунд замеров не было (для журнала)
         self.last_voice = now
         self._last_tick = now
+        self._start = now
+        self._above = 0        # замеров подряд громче планки, пока речи не было
 
     def tick(self, level: float, now: float) -> float:
         """Новый замер громкости. Возвращает длительность тишины в секундах."""
@@ -2187,11 +2199,13 @@ class SilenceWatch:
         # Фон отслеживаем по минимуму: в паузах между словами уровень падает
         # до комнаты, а вверх идём медленно, чтобы собственная речь не задрала
         # порог и не оборвала фразу на середине.
+        self.peak = max(self.peak, level)
         if self.floor is None:
             # Первый замер мог попасть на речь (человек заговорил раньше, чем
             # таблетка появилась). Тогда фон считался бы по его же голосу, и
-            # планка «это речь» задиралась выше самой речи.
-            self.floor = min(level, self.LEVEL_ON)
+            # планка «это речь» задиралась выше самой речи. Если так и вышло —
+            # фон сам упадёт до комнаты в первой же паузе между словами.
+            self.floor = min(level, self.FIRST_FLOOR_MAX)
         elif level < self.floor:
             self.floor = level
         else:
@@ -2205,6 +2219,20 @@ class SilenceWatch:
             thr = max(self.LEVEL_ON, room)
         self.threshold = min(self.LEVEL_MAX, thr)
         if level > self.threshold:
-            self.heard = True
+            if not self.heard:
+                self._above += 1
+                if self._above < self.START_TICKS:
+                    return now - self.last_voice
+                self.heard = True
+                self.heard_at = now - self._start
             self.last_voice = now
+        elif not self.heard:
+            self._above = 0
         return now - self.last_voice
+
+    def summary(self) -> str:
+        """Одна строка в журнал: как громко было и когда услышали голос."""
+        when = (f"речь услышана через {self.heard_at:.1f} c" if self.heard
+                else "речь НЕ услышана")
+        return (f"фон {self.floor or 0.0:.4f}, пик {self.peak:.4f}, "
+                f"порог {self.threshold:.4f}, {when}")

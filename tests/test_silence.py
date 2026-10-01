@@ -62,3 +62,37 @@ def test_pause_around_the_freeze_is_still_counted():
         now += 0.1
         silent = w.tick(0.0005, now + 7.0)
     assert silent > LOCK_AUTOSTOP
+
+
+def test_quiet_start_is_heard():
+    """Человек начинает говорить тихо (или микрофон после обновления системы
+    стал тише) в тихой комнате. Раньше планка начала речи была жёстко 0.02 —
+    такой голос её не перепрыгивал, и таблетка всю диктовку висела на
+    «Говорите…» без волны и таймера, а через 2 c краснела."""
+    room = [0.0006] * 5
+    quiet = [0.012, 0.008, 0.015, 0.0004] * 20
+    w, _ = run(room + quiet)
+    assert w.heard
+    assert w.heard_at < 1.0
+
+
+def test_quiet_speech_from_the_first_moment_is_heard():
+    """Заговорил тихо сразу, ещё до первого замера тишины: фон сначала
+    считается по голосу, но в первой же паузе между словами падает до
+    комнаты — и голос становится слышен."""
+    w, _ = run([0.012, 0.008, 0.015, 0.0004] * 10)
+    assert w.heard
+    assert w.heard_at < 1.0
+
+
+def test_single_click_is_not_speech():
+    """Один громкий щелчок (клавиша, звук старта) — ещё не голос."""
+    w, _ = run([0.0006] * 5 + [0.05] + [0.0006] * 50)
+    assert not w.heard
+
+
+def test_summary_line():
+    w, _ = run([0.0006] * 5 + [0.03] * 10)
+    assert "речь услышана" in w.summary()
+    w2, _ = run([0.0006] * 20)
+    assert "НЕ услышана" in w2.summary()

@@ -332,6 +332,7 @@ class Dictation:
                 self.indicator.show_wave(list(wave), locked=self._locked, glow=glow,
                                          timer=fmt_elapsed(self.recorder.elapsed))
             time.sleep(0.1)
+        log.info("Громкость записи: %s", watch.summary())
 
     def _check_voice_cancel(self) -> None:
         try:
