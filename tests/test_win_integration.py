@@ -189,6 +189,54 @@ def test_pill_shows_on_top_without_stealing_focus(window):
     loop.destroy()
 
 
+def test_sticky_pill_climbs_back_over_other_topmost_window(window):
+    """Другое «всегда сверху» окно перекрыло таблетку — приклеенная таблетка
+    на смене активного окна сразу встаёт выше, обычная ждёт своей секунды."""
+    import tkinter as tk
+    from ctypes import wintypes
+
+    from localflow.win import overlay, ui
+
+    root, _, _ = window
+    user32.GetTopWindow.restype = wintypes.HWND
+    user32.GetTopWindow.argtypes = [wintypes.HWND]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+
+    def above(a: int, b: int) -> bool:
+        h = user32.GetTopWindow(None)
+        while h:
+            if h == a:
+                return True
+            if h == b:
+                return False
+            h = user32.GetWindow(h, 2)   # GW_HWNDNEXT
+        raise AssertionError("окна нет в списке")
+
+    loop = ui.UiLoop()
+    p = overlay.PillWindow(loop)
+    assert p.sticky and p._fg_hook                          # приклеена по умолчанию
+    p.show_text("Говорите…")
+    loop.pump(0.3)
+    top = tk.Toplevel(root)
+    top.geometry("200x100")
+    top.attributes("-topmost", True)
+    pump(root, 0.2)
+    other = int(top.wm_frame(), 16)
+    assert above(other, p.hwnd)                              # перекрыта
+    p.sticky = False
+    p._on_foreground()
+    assert above(other, p.hwnd)                              # обычная — не дёргается
+    p.sticky = True
+    p._on_foreground()
+    assert above(p.hwnd, other)
+    assert user32.IsWindowVisible(wintypes.HWND(p.hwnd))
+    top.destroy()
+    p.destroy()
+    assert p._fg_hook is None
+    loop.destroy()
+
+
 def test_tray_icon_menu_and_notification():
     from localflow.menu import Item
     from localflow.win import tray, ui, w32

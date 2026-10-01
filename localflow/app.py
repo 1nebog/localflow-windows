@@ -205,6 +205,7 @@ class App:
         self.ui = None
         self.tray = None
         self.pill = None
+        self.pill_sticky = bool(self.cfg.get("pill_sticky", True))
         self.panel_server = None
         self.panel_window = None
         self._ui_thread = None
@@ -432,6 +433,13 @@ class App:
             self.pill.set_animation(name)
         self._set("pill_animation", name)
 
+    def set_pill_sticky(self, on: bool) -> None:
+        self.pill_sticky = bool(on)
+        if self.pill is not None:
+            pill = self.pill
+            self.ui.post(lambda: setattr(pill, "sticky", self.pill_sticky))
+        self._set("pill_sticky", bool(on))
+
     def set_sounds(self, on: bool) -> None:
         self.sounds.enabled = bool(on)
         self._set("sounds", bool(on))
@@ -515,6 +523,7 @@ class App:
         self.ui = ui.UiLoop()
         self._ui_thread = threading.get_ident()
         self.pill = overlay.PillWindow(self.ui, self.pill_animation)
+        self.pill.sticky = self.pill_sticky
         self.dictation.indicator = self.pill
         self.tray = tray.Tray(self.ui, lambda: menu.build(self))
         self.tray.add(menu.tray_state(self), menu.tooltip(self))

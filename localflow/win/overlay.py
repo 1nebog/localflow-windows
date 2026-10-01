@@ -94,6 +94,15 @@ class PillWindow:
         self._timer = None
         self._shown = False
         self._topmost_t = -1e9
+        # «Приклеенная» таблетка: наверх сразу при смене активного окна
+        # (Alt+Tab, клик, открыли или закрыли окно) и чаще во время показа.
+        # На всех рабочих столах она и так: служебные окна (TOOLWINDOW)
+        # Windows показывает везде.
+        self.sticky = True
+        self._fg_proc = w32.WINEVENTPROC(self._on_foreground)
+        self._fg_hook = w32.user32.SetWinEventHook(
+            w32.EVENT_SYSTEM_FOREGROUND, w32.EVENT_SYSTEM_FOREGROUND, None, self._fg_proc,
+            0, 0, w32.WINEVENT_OUTOFCONTEXT | w32.WINEVENT_SKIPOWNPROCESS)
         self.frames = 0                 # для проверок: сколько кадров нарисовано
         self.controller = pill.PillController(ui.post, self, pill.PillModel(animation or ""),
                                               clock=clock)
@@ -111,6 +120,19 @@ class PillWindow:
         self.ui.post(_warm)
 
     # --- Поток окна ---
+
+    def _on_foreground(self, *_args) -> None:
+        try:
+            if self.sticky and self._shown:
+                self._raise(self._clock())
+        except Exception:
+            pass
+
+    def _raise(self, now: float) -> None:
+        # поверх всех: другое «всегда сверху» окно могло перекрыть
+        self._topmost_t = now
+        w32.user32.SetWindowPos(self.hwnd, w32.HWND_TOPMOST, 0, 0, 0, 0,
+                                w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE)
 
     def _on_message(self, msg, wparam, lparam):
         if msg == w32.WM_MOUSEACTIVATE:
@@ -153,11 +175,8 @@ class PillWindow:
         if fresh or not self._shown:
             w32.user32.ShowWindow(self.hwnd, w32.SW_SHOWNOACTIVATE)
             self._shown = True
-        if fresh or now - self._topmost_t > 1.0:
-            # поверх всех: другое «всегда сверху» окно могло перекрыть
-            self._topmost_t = now
-            w32.user32.SetWindowPos(self.hwnd, w32.HWND_TOPMOST, 0, 0, 0, 0,
-                                    w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE)
+        if fresh or now - self._topmost_t > (0.25 if self.sticky else 1.0):
+            self._raise(now)
         if self._timer is None and self.model.animating(now):
             self._timer = self.ui.every(self.FRAME_SEC, self._tick)
 
@@ -195,6 +214,9 @@ class PillWindow:
         self.frames += 1
 
     def destroy(self) -> None:
+        if self._fg_hook:
+            w32.user32.UnhookWinEvent(self._fg_hook)
+            self._fg_hook = None
         self.withdraw()
         self._free_surface()
         w32.destroy_window(self.hwnd)

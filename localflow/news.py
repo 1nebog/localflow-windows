@@ -5,6 +5,12 @@
 """
 
 NEWS = [
+    ("0.1.11", {
+        "ru": ["Таблетка сразу встаёт поверх окон при переключении — выключается в настройках"],
+        "en": ["The pill jumps back on top as you switch windows — can be turned off in Settings"],
+        "uk": ["Таблетка одразу стає поверх вікон під час перемикання — вимикається в налаштуваннях"],
+        "de": ["Die Pille springt beim Fensterwechsel sofort wieder nach vorn — abschaltbar in den Einstellungen"],
+    }),
     ("0.1.10", {
         "ru": ["Таблетка больше не застревает на «Говорите…», если начинаешь говорить тихо"],
         "en": ["The pill no longer gets stuck on “Speak…” when you start speaking quietly"],

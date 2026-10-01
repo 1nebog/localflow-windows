@@ -49,6 +49,7 @@ PANEL_STRINGS = {
         "set_style": "Стиль текста", "set_paste": "Метод вставки",
         "set_model": "Модель", "set_idle": "Выгружать из памяти при простое",
         "set_autostart": "Запускать вместе с Windows", "set_sounds": "Звуки",
+        "set_sticky": "Таблетка всегда поверх окон",
         "set_anim": "Подсветка таблетки", "set_uilang": "Язык интерфейса",
         "set_llm": "Умное исправление", "llm_needed": "Нужно умное исправление",
         "set_media": "Пауза музыки при записи",
@@ -83,6 +84,7 @@ PANEL_STRINGS = {
         "set_style": "Text style", "set_paste": "Paste method",
         "set_model": "Model", "set_idle": "Free memory when idle",
         "set_autostart": "Start with Windows", "set_sounds": "Sounds",
+        "set_sticky": "Pill always on top",
         "set_anim": "Pill glow", "set_uilang": "Interface language",
         "set_llm": "Smart correction", "llm_needed": "Needs smart correction",
         "set_media": "Pause music while recording",
@@ -117,6 +119,7 @@ PANEL_STRINGS = {
         "set_style": "Стиль тексту", "set_paste": "Метод вставки",
         "set_model": "Модель", "set_idle": "Вивантажувати з пам'яті під час простою",
         "set_autostart": "Запускати разом з Windows", "set_sounds": "Звуки",
+        "set_sticky": "Таблетка завжди поверх вікон",
         "set_anim": "Підсвітка таблетки", "set_uilang": "Мова інтерфейсу",
         "set_llm": "Розумне виправлення", "llm_needed": "Потрібне розумне виправлення",
         "set_media": "Пауза музики під час запису",
@@ -151,6 +154,7 @@ PANEL_STRINGS = {
         "set_style": "Textstil", "set_paste": "Einfügemethode",
         "set_model": "Modell", "set_idle": "Speicher bei Leerlauf freigeben",
         "set_autostart": "Mit Windows starten", "set_sounds": "Töne",
+        "set_sticky": "Kapsel immer im Vordergrund",
         "set_anim": "Kapsel-Leuchten", "set_uilang": "Sprache der Oberfläche",
         "set_llm": "Intelligente Korrektur", "llm_needed": "Braucht intelligente Korrektur",
         "set_media": "Musik beim Aufnehmen pausieren",
@@ -231,6 +235,7 @@ def settings(app) -> dict:
         "pill_animation": app.pill_animation,
         "idle_unload_min": str(d.idle_unload_min),
         "autostart": bool(app.autostart_enabled()),
+        "pill_sticky": bool(app.pill_sticky),
         "sounds": bool(app.sounds.enabled),
         "pause_media": bool(app.media.enabled),
         "ui_lang": core._UI_LANG,
@@ -258,7 +263,7 @@ def apply(app, key: str, value) -> bool:
     """Настройка со страницы. Неизвестное и недопустимое — False."""
     if isinstance(value, bool):
         switches = {"autostart": app.set_autostart, "sounds": app.set_sounds,
-                    "pause_media": app.set_media_pause}
+                    "pause_media": app.set_media_pause, "pill_sticky": app.set_pill_sticky}
         if key not in switches:
             return False
         return switches[key](value) is not False
@@ -924,7 +929,7 @@ function renderSettings(){
     `</div><div class="sec-title">${L.sec_model}</div><div class="group">`+
     row(L.set_model,pick('model'))+row(L.set_llm,pick('llm_mode'))+row(L.set_idle,pick('idle_unload_min'))+
     `</div><div class="sec-title">${L.sec_app}</div><div class="group">`+
-    row(L.set_autostart,sw('autostart'))+row(L.set_sounds,sw('sounds'))+row(L.set_media,sw('pause_media'))+
+    row(L.set_autostart,sw('autostart'))+row(L.set_sticky,sw('pill_sticky'))+row(L.set_sounds,sw('sounds'))+row(L.set_media,sw('pause_media'))+
     row(L.set_anim,pick('pill_animation'))+row(L.set_uilang,pick('ui_lang'))+
     `<div class="set-row"><span class="name">${L.set_updates}<div class="note" id="updNote">${esc(L.upd_version.replace('{v}',DATA.version))}</div></span>
       <button class="btn link" id="updManual" hidden>${L.upd_manual}</button>

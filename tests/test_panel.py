@@ -47,6 +47,7 @@ def make_app(tmp_path):
         set_paste=calls.set_paste, set_ui_lang=calls.set_ui_lang, set_mic=calls.set_mic,
         set_animation=calls.set_animation, set_idle_unload=calls.set_idle_unload,
         set_sounds=calls.set_sounds, set_autostart=calls.set_autostart,
+        pill_sticky=True, set_pill_sticky=calls.set_pill_sticky,
         set_profiles=calls.set_profiles, delete_history=calls.delete_history,
         clear_history=calls.clear_history,
         polisher=SimpleNamespace(mode="off", enabled=False, progress=None, is_loading=False,
@@ -105,6 +106,8 @@ def test_apply_settings(tmp_path):
     assert panel.apply(app, "sounds", False)
     assert panel.apply(app, "llm_mode", "fast")
     assert panel.apply(app, "pause_media", False)
+    assert panel.apply(app, "pill_sticky", False)
+    assert not panel.apply(app, "pill_sticky", "off")   # переключатель — только да/нет
     assert not panel.apply(app, "llm_mode", "huge")
     assert not panel.apply(app, "model", "gigantic")
     assert not panel.apply(app, "language", "xx")
@@ -113,7 +116,8 @@ def test_apply_settings(tmp_path):
     assert calls == [("choose_model", None), ("choose_model", "small"), ("set_mic", None),
                      ("set_language", "en"), ("set_idle_unload", 30),
                      ("set_animation", "orbit"), ("set_sounds", False),
-                     ("set_llm_mode", "fast"), ("set_media_pause", False)]
+                     ("set_llm_mode", "fast"), ("set_media_pause", False),
+                     ("set_pill_sticky", False)]
 
 
 def test_clean_profiles_and_pairs():
