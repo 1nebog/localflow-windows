@@ -24,7 +24,7 @@ from .core import (
     DEFAULT_LANGUAGE, DEFAULT_MODEL, INITIAL_PROMPTS, SAMPLE_RATE,
     SILENCE_PEAK_LEVEL, apply_dictionary, apply_editor_command,
     apply_self_corrections, apply_snippet, build_initial_prompt, clean_text,
-    is_spam_repeat, scrub_hallucinations, strip_loop_tail, strip_prompt_echo,
+    is_spam_repeat, looks_like_gibberish, scrub_hallucinations, strip_loop_tail, strip_prompt_echo,
 )
 from .engine.catalog import WHISPER_MODELS
 from .engine.languages import to_code
@@ -186,12 +186,13 @@ class Transcriber:
 
     # --- Один прогон ---------------------------------------------------------
 
-    def _fields(self, lang, prompt=None) -> dict:
+    def _fields(self, lang, prompt=None, calm: bool = False) -> dict:
         fields = {
             "response_format": "verbose_json",
             "language": lang or "auto",
             "temperature": "0.0",
-            "temperature_inc": "0.2",
+            # calm — без перебора температур: повтор после «каши»
+            "temperature_inc": "0.0" if calm else "0.2",
             # Порог «здесь тишина, окно можно пропустить» поднят:
             # на дефолтных 0.6 Whisper иногда выбрасывал целое окно
             # длинной диктовки, и хвост фразы терялся. Тишину у нас
@@ -208,9 +209,9 @@ class Transcriber:
             fields["prompt"] = prompt
         return fields
 
-    def _infer(self, audio: np.ndarray, lang, prompt) -> dict:
+    def _infer(self, audio: np.ndarray, lang, prompt, calm: bool = False) -> dict:
         wav = to_wav_bytes(audio)
-        fields = self._fields(lang, prompt)
+        fields = self._fields(lang, prompt, calm)
         timeout = 120 + 10 * len(audio) / SAMPLE_RATE
         t0 = time.monotonic()
         try:
@@ -242,6 +243,12 @@ class Transcriber:
             end = min(total, off + self.WINDOW_SEC)
             chunk = audio[int(off * SAMPLE_RATE):int(end * SAMPLE_RATE)]
             res = self._infer(chunk, lang, prompt if first else None)
+            said = " ".join(seg.get("text") or "" for seg in res.get("segments") or [])
+            if looks_like_gibberish(said, lang):
+                # Каша вместо речи: заново без подсказки (её Whisper и
+                # «продолжал») и без перебора температур (он и даёт смесь языков)
+                log.warning("Whisper выдал кашу, распознаю заново: %r", said[:120])
+                res = self._infer(chunk, lang, None, calm=True)
             first = False
             language = language or to_code(res.get("language"))
             # Язык определяем один раз, по первому окну (как mlx-whisper на

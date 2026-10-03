@@ -1518,6 +1518,32 @@ _VOICE_CANCEL_RE = re.compile(
 def is_voice_cancel(text: str) -> bool:
     return bool(_VOICE_CANCEL_RE.search(text.strip()))
 
+# Письменности, которых в диктовке на наших языках не бывает: иероглифы,
+# кана, хангыль, арабская вязь, иврит, тайский
+_ALIEN_SCRIPT_RE = re.compile(
+    "[\u0590-\u06ff\u0e00-\u0e7f\u3040-\u30ff\u3400-\u9fff"
+    "\uac00-\ud7af\uf900-\ufaff]")
+
+_LATIN_RE = re.compile(r"[a-zA-Z]")
+
+_CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁіїєґІЇЄҐ]")
+
+def looks_like_gibberish(text: str, lang: str | None) -> bool:
+    """Whisper сорвался и выдал словесную кашу вместо речи.
+
+    Так бывает на тихом начале записи: модель продолжает нашу же подсказку
+    («Английские слова пишем…»), сбивается и, перебирая всё более
+    «смелые» варианты, выдаёт смесь языков — «советsim환», «PIенд»,
+    «TottenFeェялкомhake». Узнаём по двум приметам, которых в живой
+    диктовке не бывает: буквы чужих письменностей и слова, склеенные из
+    латиницы и кириллицы.
+    """
+    if lang in ("ru", "uk", "en", "de", None) and _ALIEN_SCRIPT_RE.search(text):
+        return True
+    mixed = sum(1 for w in re.findall(r"[^\W\d_]+", text, re.UNICODE)
+                if _LATIN_RE.search(w) and _CYRILLIC_RE.search(w))
+    return mixed >= 2
+
 def is_hallucination(text: str) -> bool:
     low = text.lower()
     return any(part in low for part in _HALLUCINATION_PARTS)

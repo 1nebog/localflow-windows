@@ -94,6 +94,37 @@ def test_short_audio_one_request_with_prompt(make):
     assert out["text"].strip() == "привет мир"
 
 
+def test_gibberish_is_decoded_again_without_prompt_and_fallback(make):
+    """Whisper «продолжил» подсказку и выдал смесь языков — второй проход
+    без подсказки и без перебора температур."""
+    def script(sec, fields, n):
+        if "prompt" in fields:
+            text = " Английские слова пишите Child Services советsim환 JASONPIенд"
+        else:
+            text = " Добавь, пожалуйста, ссылку."
+        return {"language": "russian",
+                "segments": [{"start": 0.0, "end": sec, "text": text}]}
+
+    t = make(script)
+    out = t._decode(speech(10), "ru", "ПОДСКАЗКА")
+    calls = real_calls(t)
+    assert len(calls) == 2
+    assert "prompt" not in calls[1] and calls[1]["temperature_inc"] == "0.0"
+    assert out["text"].strip() == "Добавь, пожалуйста, ссылку."
+
+
+@pytest.mark.parametrize("text, bad", [
+    ("Английские слова пишите Child Services viashowodo servant когда советsim환", True),
+    ("Extremaduraatta JASONPIенд CAMSCOTT друзья советsim", True),
+    ("Сделай JASONPIенд один раз", False),
+    ("Залей на Netlify и сделай git push, потом HTML-документ.", False),
+    ("Deploy the feature and open a pull request.", False),
+])
+def test_looks_like_gibberish(text, bad):
+    from localflow.core import looks_like_gibberish
+    assert looks_like_gibberish(text, "ru") is bad
+
+
 def test_long_audio_windows_prompt_only_first(make):
     def script(sec, fields, n):
         return {"language": "russian",

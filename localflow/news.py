@@ -5,6 +5,16 @@
 """
 
 NEWS = [
+    ("0.1.12", {
+        "ru": ["Умное исправление больше не меняет твои слова: «добавь» остаётся «добавь»",
+               "Вместо словесной каши на тихом начале — нормальный текст"],
+        "en": ["Smart correction no longer changes your words: what you say is what gets typed",
+               "No more word salad when you start speaking quietly"],
+        "uk": ["Розумне виправлення більше не змінює твої слова: «додай» лишається «додай»",
+               "Замість словесної каші на тихому початку — нормальний текст"],
+        "de": ["Die smarte Korrektur ändert deine Wörter nicht mehr: Was du sagst, wird getippt",
+               "Kein Wortsalat mehr, wenn du leise anfängst"],
+    }),
     ("0.1.11", {
         "ru": ["Таблетка сразу встаёт поверх окон при переключении — выключается в настройках"],
         "en": ["The pill jumps back on top as you switch windows — can be turned off in Settings"],
