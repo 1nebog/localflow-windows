@@ -1674,8 +1674,9 @@ _LLM_SYSTEM = (
     "3. Убери слова-паразиты, мычание, оговорки, ложные старты и повторы "
     "одного и того же по два-три раза.\n"
     "4. Если человек сам себя поправил — оставь только финальный вариант.\n"
-    "5. Почини падежи и согласование ТАМ, ГДЕ РЕЧЬ СБИЛАСЬ И ВЫШЛО "
-    "неграмотно. Где всё грамотно — не трогай.\n"
+    "5. Формы слов НЕ меняй: лицо, время, число и падеж оставь, как сказал "
+    "человек. «добавь» остаётся «добавь» (не «добавлю»), «сделай» — "
+    "«сделай», «буду» — «буду», «ты» — «ты».\n"
     "6. СЛОВА ЧЕЛОВЕКА НЕ ЗАМЕНЯЙ. Не подбирай синонимы, не переставляй "
     "слова местами, не делай текст «красивее», не сокращай и не ужимай. "
     "Всё сказанное по делу остаётся на месте, теми же словами.\n"
@@ -2025,6 +2026,218 @@ def drop_invented_dashes(src: str, out: str) -> str:
     # Тире в самом начале строки превращать в запятую нельзя
     fixed = re.sub(r"^\s*,\s*", "", fixed)
     return fixed
+
+# Паразиты, которые правке разрешено выкидывать. Всё остальное, что человек
+# сказал, остаётся его словами — даже если модели кажется «грамотнее» иначе.
+_PARASITES = set(
+    "ну вот типа короче значит соответственно собственно ой э ээ эээ эм "
+    "мм ммм хм же уже там тут прям просто вообще таки такой такая такое "
+    "такие так это um uh"
+    .split())
+
+_PARASITE_PAIRS = {("как", "бы"), ("это", "самое"), ("в", "общем"),
+                   ("так", "сказать"), ("то", "бишь"), ("то", "есть"),
+                   ("как", "раз"), ("это", "дело"), ("все", "дело")}
+
+_TOKEN_RE = re.compile(r"\S+")
+
+_LEAD_PUNCT_RE = re.compile(r"^[^\w]+", re.UNICODE)
+
+_TRAIL_PUNCT_RE = re.compile(r"[^\w]+$", re.UNICODE)
+
+def _word_key(token: str) -> str:
+    """Слово без регистра, «ё» и знаков: «Её,» и «ее» — одно и то же."""
+    return re.sub(r"[\W_]+", "", token.lower().replace("ё", "е"), flags=re.UNICODE)
+
+def _is_latin(word: str) -> bool:
+    return bool(word) and all("a" <= c <= "z" or c.isdigit() for c in word)
+
+def _same_word(spoken: str, edited: str) -> bool:
+    """Правка не подменила слово, а только поправила его написание.
+
+    Можно: регистр, «ё», знаки; опечатку распознавания внутри слова
+    («дешборд» → «дашборд»); термин латиницей («нетлифай» → «netlify»).
+    Нельзя: другое окончание («добавь» → «добавлю», «буду» → «будем»,
+    «объясни» → «объяснить») — это уже другое слово, а не то, что сказано.
+    """
+    if spoken == edited:
+        return True
+    if _is_latin(edited) and not _is_latin(spoken):
+        return True
+    if abs(len(spoken) - len(edited)) > 1 or spoken[-2:] != edited[-2:]:
+        return False
+    sm = difflib.SequenceMatcher(None, spoken, edited, autojunk=False)
+    changed = sum(max(b - a, d - c) for op, a, b, c, d in sm.get_opcodes()
+                  if op != "equal")
+    return changed <= 2
+
+def _parasite_flags(keys: list[str]) -> list[bool]:
+    flags = [k in _PARASITES for k in keys]
+    for i in range(len(keys) - 1):
+        if (keys[i], keys[i + 1]) in _PARASITE_PAIRS:
+            flags[i] = flags[i + 1] = True
+    return flags
+
+def _glue_signs(text: str) -> tuple[list[str], list[str]]:
+    """Слова текста и пробелы перед ними. Отдельно стоящий знак («-» в
+    списке, «—») приклеиваем к соседнему слову: сам по себе он не слово."""
+    toks: list[str] = []
+    gaps: list[str] = []
+    pend_gap, pend = None, ""
+    last_end = 0
+    for m in _TOKEN_RE.finditer(text):
+        gap = text[last_end:m.start()] if toks or pend else ""
+        last_end = m.end()
+        if not _word_key(m.group()):
+            if pend_gap is None:
+                pend_gap = gap
+            pend += (gap if pend else "") + m.group()
+            continue
+        if pend:
+            toks.append(pend + gap + m.group())
+            gaps.append(pend_gap)
+            pend_gap, pend = None, ""
+        else:
+            toks.append(m.group())
+            gaps.append(gap)
+    if pend:
+        if toks:
+            toks[-1] += (pend_gap or "") + pend
+        else:
+            toks.append(pend)
+            gaps.append("")
+    return toks, gaps
+
+def keep_spoken_words(src: str, out: str) -> str:
+    """Вернуть в правку слова человека, которые модель подменила.
+
+    Модель правки чинит знаки и выкидывает мусор хорошо, но иногда
+    «улучшает» речь: «добавь, пожалуйста» → «добавлю», «буду» → «сделаю»,
+    «ты» → «я». Для диктовки это хуже любой опечатки: вставляется не то,
+    что сказано. Поэтому сверяем результат с распознанным по словам:
+    - знаки, регистр, «ё», слитно/раздельно — берём из правки;
+    - выкинутые паразиты, повторы и оговорки — пусть остаются выкинутыми;
+    - заменённые, выкинутые по делу и дописанные от себя слова — откатываем
+      к сказанному.
+    """
+    st, _ = _glue_signs(src)
+    # У слов правки помним и пробел перед ними: переносы строк — её работа
+    ot, gaps = _glue_signs(out)
+    sk = [_word_key(t) for t in st]
+    ok = [_word_key(t) for t in ot]
+    junk = _parasite_flags(sk)
+
+    def droppable(a: int, b: int, swapped: bool) -> list[bool]:
+        """Какие из выкинутых моделью слов src[a:b] можно не возвращать.
+
+        Если модель поставила на их место свои слова (swapped) — прощаем
+        только паразитов: повтор рядом тут не оговорка, а сказанное
+        («объясни мне, то объясни мне это»)."""
+        if swapped:
+            return [not sk[i] or junk[i] for i in range(a, b)]
+        after = sk[b:b + 6]
+        stems_after = {k[:4] for k in after if len(k) >= 3}
+        # Оговорка или ложный старт: то же слово (или его основа) тут же
+        # звучит снова — «я добавлю, ой, добавь», «Добавим… Добавим…»
+        restart = (b - a <= 6 and any(
+            len(k) >= 3 and k[:4] in stems_after for k in sk[a:b]))
+        res = []
+        for i in range(a, b):
+            k = sk[i]
+            near = sk[max(0, i - 6):i] + sk[i + 1:i + 7]
+            res.append(not k or junk[i] or restart or k in near)
+        return res
+
+    pieces: list[list[str]] = []      # [пробел перед словом, слово]
+    restored: list[str] = []
+    added: list[str] = []
+    carry = {"gap": "", "lead": ""}     # что оставил после себя выкинутый кусок
+
+    def put(tok: str, gap: str = " ") -> None:
+        if "\n" in carry["gap"] and "\n" not in gap:
+            gap = carry["gap"]
+        pieces.append([gap if pieces else "", carry["lead"] + tok])
+        carry["gap"] = carry["lead"] = ""
+
+    def last() -> str:
+        return pieces[-1][1] if pieces else ""
+
+    def bring_back(a: int, b: int, like: list[str], gap: str = " ") -> None:
+        """Вернуть сказанные слова src[a:b], примерив их к месту в правке."""
+        keep = [i for i, d in zip(range(a, b), droppable(a, b, bool(like)))
+                if not d]
+        if not keep:
+            return
+        toks = [st[i] for i in keep]
+        if like:
+            lead = _LEAD_PUNCT_RE.match(like[0])
+            trail = _TRAIL_PUNCT_RE.search(like[-1])
+            core0 = _LEAD_PUNCT_RE.sub("", toks[0])
+            first = _LEAD_PUNCT_RE.sub("", like[0])[:1]
+            if first.isupper() or (not first.isalpha() and (
+                    not pieces or re.search(r"[.!?]$", last()))):
+                core0 = core0[:1].upper() + core0[1:]
+            elif core0[:1].isupper() and not _is_latin(_word_key(core0)) \
+                    and core0[1:] == core0[1:].lower():
+                core0 = core0[:1].lower() + core0[1:]
+            toks[0] = (lead.group() if lead else "") + core0
+            toks[-1] = (_TRAIL_PUNCT_RE.sub("", toks[-1])
+                        + (trail.group() if trail else ""))
+        elif re.search(r"(?<![.…])[.!?]$", last()):
+            toks[0] = toks[0][:1].upper() + toks[0][1:]
+        restored.append(" ".join(st[i] for i in keep))
+        for n, t in enumerate(toks):
+            put(t, gap if n == 0 else " ")
+
+    sm = difflib.SequenceMatcher(None, sk, ok, autojunk=False)
+    for op, a, b, c, d in sm.get_opcodes():
+        if op == "equal":
+            for j in range(c, d):
+                put(ot[j], gaps[j])
+        elif op == "insert":
+            # Дописанное от себя не берём, но его знаки (конец предложения,
+            # кавычки) и перенос строки оставляем на месте
+            for j in range(c, d):
+                t = ot[j]
+                if not _word_key(t):
+                    put(t, gaps[j])
+                    continue
+                added.append(t)
+                carry["gap"] = carry["gap"] or gaps[j]
+                lead = _LEAD_PUNCT_RE.match(t)
+                carry["lead"] += lead.group() if lead else ""
+                trail = _TRAIL_PUNCT_RE.search(t)
+                if trail and pieces:
+                    prev = _TRAIL_PUNCT_RE.search(last())
+                    if not prev or prev.group() in ",;:":
+                        pieces[-1][1] = (_TRAIL_PUNCT_RE.sub("", last())
+                                         + trail.group())
+        elif op == "delete":
+            bring_back(a, b, [])
+        else:
+            if "".join(sk[a:b]) == "".join(ok[c:d]):
+                for j in range(c, d):
+                    put(ot[j], gaps[j])
+            elif b - a == d - c:
+                # Слово в слово: проверяем каждую пару отдельно
+                for i, j in zip(range(a, b), range(c, d)):
+                    if _same_word(sk[i], ok[j]):
+                        put(ot[j], gaps[j])
+                    else:
+                        bring_back(i, i + 1, [ot[j]], gaps[j])
+            else:
+                bring_back(a, b, ot[c:d], gaps[c])
+
+    if not restored and not added:
+        return out
+    text = "".join(gap + tok for gap, tok in pieces)
+    # Склейка: «, ,» → «,», «, .» → «.»
+    text = re.sub(r"([,;:])[ \t]*(?=[,;:.!?…])", "", text)
+    if text[:1].islower() and out[:1].isupper():
+        text = text[:1].upper() + text[1:]
+    log.info("Правка: вернул сказанное %s, убрал дописанное %s",
+             restored[:6], added[:6])
+    return text
 
 def looks_like_lang(text: str, lang: str) -> bool:
     """Грубая проверка, что текст действительно на нужном языке.

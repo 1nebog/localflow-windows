@@ -20,7 +20,7 @@ from .core import (
     _LLM_SHOTS, _LLM_SYSTEM, _LLM_TRANSLATE_SYSTEM, ADDED_WORDS_LIMIT,
     LANG_NAMES, LLM_MAX_CHARS, LLM_MIN_CHARS, LLM_MODES, LLM_POLISH_BUDGET_SEC, TASK_POLISH,
     TASK_REWRITE, TASK_TRANSLATE, added_content_ratio, context_hint,
-    drop_invented_dashes, invented_numbers, learned_shots, looks_like_lang,
+    drop_invented_dashes, invented_numbers, keep_spoken_words, learned_shots, looks_like_lang,
     same_script, split_for_llm, text_similarity, translate_shots,
 )
 from .engine.catalog import LLM_MODELS
@@ -441,4 +441,4 @@ class TextPolisher:
         if not same_script(src, out):
             log.warning("Исправление отброшено (сменился язык): %r", out[:80])
             return src
-        return drop_invented_dashes(src, out)
+        return drop_invented_dashes(src, keep_spoken_words(src, out))
